@@ -16,7 +16,7 @@ import java.util.List;
  */
 public interface WorldGuardService extends SyncDemocracyService {
     /**
-     * Returns regions overlapping the bounding box in the given world.
+     * Returns regions overlapping the block.
      * The result is fetched live from WorldGuard.
      */
     @NotNull List<ProtectedRegion> getRegionsAt(@NotNull Block block);
