@@ -12,10 +12,14 @@ repositories {
     maven("https://repo.papermc.io/repository/maven-public/") {
         name = "papermc-repo"
     }
+    maven("https://maven.enginehub.org/repo/") {
+        name = "enginehub"
+    }
 }
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
+    compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.14")
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
 }
 

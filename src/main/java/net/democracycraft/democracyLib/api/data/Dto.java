@@ -1,4 +1,6 @@
 package net.democracycraft.democracyLib.api.data;
 
-public interface Dto {
+import java.io.Serializable;
+
+public interface Dto extends Serializable {
 }

@@ -1,4 +1,6 @@
-package net.democracycraft.democracyLib.api.service.config;
+package net.democracycraft.democracyLib.api.config;
 
-public interface DemocracyConfig {
+import net.democracycraft.democracyLib.api.data.Dto;
+
+public interface DemocracyConfig extends Dto {
 }
