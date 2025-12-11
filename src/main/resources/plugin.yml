@@ -4,3 +4,5 @@ main: net.democracycraft.democracyLib.DemocracyLib
 api-version: '1.21'
 load: STARTUP
 authors: [ Alepando ]
+depend:
+  - WorldGuard

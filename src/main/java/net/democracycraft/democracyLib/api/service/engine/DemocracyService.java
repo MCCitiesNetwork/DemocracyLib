@@ -4,6 +4,6 @@ import org.jetbrains.annotations.NotNull;
 
 public interface DemocracyService {
 
-    @NotNull String getName();
+    @NotNull String getServiceName();
 
 }
