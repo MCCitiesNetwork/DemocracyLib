@@ -21,14 +21,12 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
     compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.14")
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
+    implementation("org.spongepowered:configurate-yaml:4.2.0")
 }
 
 tasks {
     runServer {
-        // Configure the Minecraft version for our task.
-        // This is the only required configuration besides applying the plugin.
-        // Your plugin's jar (or shadowJar if present) will be used automatically.
-        minecraftVersion("1.21")
+        minecraftVersion("1.21.8")
     }
 }
 
