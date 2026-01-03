@@ -75,7 +75,14 @@ public interface DemocracyLibApi extends SyncDemocracyService {
      * The first caller becomes the leader (shared pool/cache/http). Subsequent callers receive a reflection bridge.
      */
     static @NotNull DemocracyLibApi instance(@NotNull JavaPlugin plugin) {
-        return DemocracyBootstrap.init(plugin, javaPlugin -> new DemocracyLib(new DemocracyLibRuntime()));
+        return instance(plugin, false);
+    }
+
+    /**
+     * Shaded entry point with optional bootstrap logging.
+     */
+    static @NotNull DemocracyLibApi instance(@NotNull JavaPlugin plugin, boolean logging) {
+        return DemocracyBootstrap.init(plugin, javaPlugin -> new DemocracyLib(new DemocracyLibRuntime()), logging);
     }
 
 }

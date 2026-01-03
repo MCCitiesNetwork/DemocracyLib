@@ -50,9 +50,13 @@ public final class DemocracyBootstrap {
         }
     }
 
-    public static @NotNull DemocracyLibApi init(@NotNull JavaPlugin plugin, @NotNull ProviderFactory providerFactory) {
+    public static @NotNull DemocracyLibApi init(@NotNull JavaPlugin plugin,
+                                                @NotNull ProviderFactory providerFactory,
+                                                boolean logging) {
         Objects.requireNonNull(plugin, "plugin");
         Objects.requireNonNull(providerFactory, "providerFactory");
+
+        BootstrapLogger log = new BootstrapLogger(logging, plugin);
 
         Map<String, Object> anchor = JvmAnchor.anchorMap();
         Object lock = JvmAnchor.lock();
@@ -68,28 +72,44 @@ public final class DemocracyBootstrap {
             if (leader != null) {
                 int leaderProtocol = (protocol instanceof Integer i) ? i : -1;
                 if (leaderProtocol != PROTOCOL_VERSION) {
-                    // Protocol mismatch: fall back to isolated mode (plugin-local instance)
+                    log.warn("Protocol mismatch (leader=" + leaderProtocol + ", local=" + PROTOCOL_VERSION + "). Falling back to isolated mode.");
                     return providerFactory.createLeader(plugin);
                 }
 
-                DemocracyLibApi api = ReflectionBridgeApi.create(plugin, leader, providerFactory);
+                DemocracyLibApi api = ReflectionBridgeApi.create(plugin, leader, providerFactory, logging);
                 ApiRegistry.registerFollower(anchor, api, plugin);
+
+                if (logging) {
+                    int followers = ApiRegistry.followerCount(anchor);
+                    String leaderFingerprint = leader.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(leader));
+                    log.info("Connected as follower. leader=" + leaderFingerprint + ", protocol=" + PROTOCOL_VERSION + ", followers=" + followers);
+                    log.info("Shared resources check: Mojang cache + thread pool are owned by the leader runtime. " +
+                            "If both plugins point to the same leader fingerprint, they are sharing those resources.");
+                }
+
                 return api;
             }
 
             DemocracyLibApi createdLeader = providerFactory.createLeader(plugin);
             publishLeaderState(anchor, plugin, createdLeader, providerFactory);
+
+            if (logging) {
+                String leaderFingerprint = createdLeader.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(createdLeader));
+                log.info("Elected as leader. leader=" + leaderFingerprint + ", protocol=" + PROTOCOL_VERSION);
+                log.info("Shared resources initialized in leader runtime: commonPool (ExecutorService) + caches.");
+            }
+
             return createdLeader;
         }
     }
 
-    /**
-     * Ensures a leader exists for the current protocol. If there is no leader (e.g. after leader shutdown),
-     * a new leader is created on-demand using the given caller's ProviderFactory.
-     */
-    static @NotNull Object ensureLeader(@NotNull JavaPlugin caller, @NotNull ProviderFactory providerFactory) {
+    static @NotNull Object ensureLeader(@NotNull JavaPlugin caller,
+                                        @NotNull ProviderFactory providerFactory,
+                                        boolean logging) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(providerFactory, "providerFactory");
+
+        BootstrapLogger log = new BootstrapLogger(logging, caller);
 
         Map<String, Object> anchor = JvmAnchor.anchorMap();
         Object lock = JvmAnchor.lock();
@@ -101,6 +121,8 @@ public final class DemocracyBootstrap {
             if (leader != null && protocol instanceof Integer i && i == PROTOCOL_VERSION) {
                 return leader;
             }
+
+            log.warn("No compatible leader found. Electing a new leader in caller classloader.");
 
             // Either no leader or protocol mismatch: create a new leader in the caller's classloader.
             DemocracyLibApi createdLeader = providerFactory.createLeader(caller);

@@ -23,19 +23,30 @@ final class ReflectionBridgeApi implements DemocracyLibApi {
 
     private final JavaPlugin caller;
     private final DemocracyBootstrap.ProviderFactory providerFactory;
+    private final boolean logging;
 
     private final Map<String, MethodHandle> mhCache = new ConcurrentHashMap<>();
 
     private volatile DemocracyServiceManager serviceManagerProxy;
 
-    private ReflectionBridgeApi(JavaPlugin caller, DemocracyBootstrap.ProviderFactory providerFactory) {
+    private ReflectionBridgeApi(JavaPlugin caller, DemocracyBootstrap.ProviderFactory providerFactory, boolean logging) {
         this.caller = caller;
         this.providerFactory = providerFactory;
+        this.logging = logging;
     }
 
-    static @NotNull DemocracyLibApi create(@NotNull JavaPlugin caller, @NotNull Object leader, @NotNull DemocracyBootstrap.ProviderFactory providerFactory) {
+    static @NotNull DemocracyLibApi create(@NotNull JavaPlugin caller,
+                                          @NotNull Object leader,
+                                          @NotNull DemocracyBootstrap.ProviderFactory providerFactory) {
+        return create(caller, leader, providerFactory, false);
+    }
+
+    static @NotNull DemocracyLibApi create(@NotNull JavaPlugin caller,
+                                          @NotNull Object leader,
+                                          @NotNull DemocracyBootstrap.ProviderFactory providerFactory,
+                                          boolean logging) {
         // leader param kept for binary compatibility with older call sites; current implementation re-reads via anchor.
-        return new ReflectionBridgeApi(caller, providerFactory);
+        return new ReflectionBridgeApi(caller, providerFactory, logging);
     }
 
     @Override
@@ -101,7 +112,7 @@ final class ReflectionBridgeApi implements DemocracyLibApi {
     private Object invokeLeaderByContractId(@NotNull String contractId, Object[] args) {
         Objects.requireNonNull(contractId, "contractId");
 
-        Object leader = DemocracyBootstrap.ensureLeader(caller, providerFactory);
+        Object leader = DemocracyBootstrap.ensureLeader(caller, providerFactory, logging);
         Object[] actualArgs = args == null ? new Object[0] : args;
 
         Object spec = BootstrapReflection.loadGeneratedSpec(contractId);
@@ -131,7 +142,7 @@ final class ReflectionBridgeApi implements DemocracyLibApi {
                 mhCache.remove(key);
             } catch (Throwable ignored) {
             }
-            Object retryLeader = DemocracyBootstrap.ensureLeader(caller, providerFactory);
+            Object retryLeader = DemocracyBootstrap.ensureLeader(caller, providerFactory, logging);
             try {
                 Method retryMethod = BootstrapReflection.resolveByGeneratedSpec(retryLeader.getClass(), spec);
                 MethodHandle retryHandle;
