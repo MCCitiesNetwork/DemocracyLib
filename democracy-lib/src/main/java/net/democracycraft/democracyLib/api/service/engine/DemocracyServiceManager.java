@@ -1,6 +1,5 @@
 package net.democracycraft.democracyLib.api.service.engine;
 
-import net.democracycraft.democracyLib.internal.bootstrap.BridgeContract;
 import net.democracycraft.democracyLib.api.bootstrap.contract.BridgeApi;
 import net.democracycraft.democracyLib.api.bootstrap.contract.BridgeMethod;
 import net.democracycraft.democracyLib.api.bootstrap.contract.BridgeNamespace;
@@ -14,24 +13,24 @@ import java.util.List;
 @BridgeApi(BridgeNamespace.DEMOCRACY_SERVICE_MANAGER)
 public interface DemocracyServiceManager {
 
-    @BridgeMethod(stability = BridgeStability.STABLE_ID, id = BridgeContract.Ids.ServiceManager.GET_ALL_SERVICES)
+    @BridgeMethod(stability = BridgeStability.DERIVED_ID)
     @NotNull List<DemocracyService> getAllServices();
 
-    @BridgeMethod(stability = BridgeStability.STABLE_ID, id = BridgeContract.Ids.ServiceManager.GET_SERVICES_BY_TYPE)
-    @NotNull <T extends DemocracyService> List<T> getServicesByType(@NotNull Class<T> serviceType);
+    @BridgeMethod(stability = BridgeStability.DERIVED_ID)
+    @NotNull <ServiceType extends DemocracyService> List<ServiceType> getServicesByType(@NotNull Class<ServiceType> serviceType);
 
-    @BridgeMethod(stability = BridgeStability.STABLE_ID, id = BridgeContract.Ids.ServiceManager.GET_SERVICE)
+    @BridgeMethod(stability = BridgeStability.DERIVED_ID)
     @Nullable DemocracyService getService(@NotNull String name);
 
-    @BridgeMethod(stability = BridgeStability.STABLE_ID, id = BridgeContract.Ids.ServiceManager.GET_PLUGIN_BOUND_SERVICES)
-    @NotNull <P extends Plugin> List<PluginBoundDemocracyService<P>> getPluginBoundServices(@NotNull P plugin);
+    @BridgeMethod(stability = BridgeStability.DERIVED_ID)
+    @NotNull <PluginType extends Plugin> List<PluginBoundDemocracyService<PluginType>> getPluginBoundServices(@NotNull PluginType plugin);
 
-    @BridgeMethod(stability = BridgeStability.STABLE_ID, id = BridgeContract.Ids.ServiceManager.REGISTER_SERVICE)
+    @BridgeMethod(stability = BridgeStability.DERIVED_ID)
     <DemocracyServiceType extends DemocracyService> void registerService(@NotNull DemocracyServiceType service);
 
-    @BridgeMethod(stability = BridgeStability.STABLE_ID, id = BridgeContract.Ids.ServiceManager.HAS_REGISTERED_SERVICE)
-    <P extends Plugin, T extends PluginBoundDemocracyService<?>> boolean hasRegisteredService(@NotNull P plugin, @NotNull Class<T> serviceType);
+    @BridgeMethod(stability = BridgeStability.DERIVED_ID)
+    <PluginType extends Plugin, PluginBoundServiceType extends PluginBoundDemocracyService<?>> boolean hasRegisteredService(@NotNull PluginType plugin, @NotNull Class<PluginBoundServiceType> serviceType);
 
-    @BridgeMethod(stability = BridgeStability.STABLE_ID, id = BridgeContract.Ids.ServiceManager.GET_SERVICE_FOR_PLUGIN)
-    @Nullable <T extends PluginBoundDemocracyService<?>> T getServiceForPlugin(@NotNull Plugin plugin, @NotNull Class<T> serviceClass);
+    @BridgeMethod(stability = BridgeStability.DERIVED_ID)
+    @Nullable <PluginBoundServiceType extends PluginBoundDemocracyService<?>> PluginBoundServiceType getServiceForPlugin(@NotNull Plugin plugin, @NotNull Class<PluginBoundServiceType> serviceClass);
 }

@@ -1,5 +1,6 @@
 package net.democracycraft.democracyLib.internal.bootstrap;
 
+import net.democracycraft.democracyLib.api.bootstrap.GeneratedBridgeContract;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
 
@@ -12,11 +13,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * This is used for diagnostics/coordination only and is intentionally weak-referenced to avoid leaks.
  */
-public final class ApiRegistry {
+public final class DemocracyLibApiRegistry {
 
-    public static final String FOLLOWERS_KEY = BridgeContract.AnchorKeys.FOLLOWERS;
+    public static final String FOLLOWERS_KEY = GeneratedBridgeContract.AnchorKeys.FOLLOWERS;
 
-    private ApiRegistry() {
+    private DemocracyLibApiRegistry() {
     }
 
     @SuppressWarnings("unchecked")

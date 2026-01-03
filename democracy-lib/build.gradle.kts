@@ -31,19 +31,10 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
     compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.14")
 
-    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
     implementation("org.spongepowered:configurate-yaml:4.2.0")
 
     testImplementation(platform("org.junit:junit-bom:5.10.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
-}
-
-sourceSets {
-    named("main") {
-        java {
-            exclude("net/democracycraft/democracyLib/api/bootstrap/contract/**")
-        }
-    }
 }
 
 tasks {

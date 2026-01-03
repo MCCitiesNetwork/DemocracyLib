@@ -1,5 +1,6 @@
 package net.democracycraft.democracyLib.internal.config;
 
+import net.democracycraft.democracyLib.api.config.DemocracyConfigName;
 import net.democracycraft.democracyLib.api.config.github.GitHubGistConfiguration;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
@@ -7,6 +8,7 @@ import org.spongepowered.configurate.objectmapping.meta.Setting;
 import org.jetbrains.annotations.NotNull;
 
 @ConfigSerializable
+@DemocracyConfigName("github-gist.yml")
 public class GitHubGistConfigurationImpl implements GitHubGistConfiguration {
 
     @Setting("token")

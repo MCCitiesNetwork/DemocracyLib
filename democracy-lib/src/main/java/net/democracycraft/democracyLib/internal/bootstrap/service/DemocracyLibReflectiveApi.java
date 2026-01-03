@@ -1,10 +1,15 @@
-package net.democracycraft.democracyLib.internal.bootstrap;
+package net.democracycraft.democracyLib.internal.bootstrap.service;
 
 import net.democracycraft.democracyLib.api.DemocracyLibApi;
+import net.democracycraft.democracyLib.api.bootstrap.GeneratedBridgeContract;
+import net.democracycraft.democracyLib.api.bootstrap.GeneratedBridgeIds;
+import net.democracycraft.democracyLib.api.config.DemocracyConfigManager;
 import net.democracycraft.democracyLib.api.config.github.GitHubGistConfiguration;
 import net.democracycraft.democracyLib.api.service.engine.DemocracyServiceManager;
 import net.democracycraft.democracyLib.api.service.github.GitHubGistService;
 import net.democracycraft.democracyLib.api.service.mojang.MojangService;
+import net.democracycraft.democracyLib.internal.bootstrap.*;
+import net.democracycraft.democracyLib.internal.bootstrap.proxy.DemocracyServiceProxies;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
@@ -19,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Local DemocracyLibApi implementation that delegates to the leader instance via reflection.
  */
-final class ReflectionBridgeApi implements DemocracyLibApi {
+public class DemocracyLibReflectiveApi implements DemocracyLibApi {
 
     private final JavaPlugin caller;
     private final DemocracyBootstrap.ProviderFactory providerFactory;
@@ -28,43 +33,44 @@ final class ReflectionBridgeApi implements DemocracyLibApi {
     private final Map<String, MethodHandle> mhCache = new ConcurrentHashMap<>();
 
     private volatile DemocracyServiceManager serviceManagerProxy;
+    private volatile DemocracyConfigManager configManagerProxy;
 
-    private ReflectionBridgeApi(JavaPlugin caller, DemocracyBootstrap.ProviderFactory providerFactory, boolean logging) {
+    private DemocracyLibReflectiveApi(JavaPlugin caller, DemocracyBootstrap.ProviderFactory providerFactory, boolean logging) {
         this.caller = caller;
         this.providerFactory = providerFactory;
         this.logging = logging;
     }
 
-    static @NotNull DemocracyLibApi create(@NotNull JavaPlugin caller,
+    public static @NotNull DemocracyLibApi create(@NotNull JavaPlugin caller,
                                           @NotNull Object leader,
                                           @NotNull DemocracyBootstrap.ProviderFactory providerFactory) {
         return create(caller, leader, providerFactory, false);
     }
 
-    static @NotNull DemocracyLibApi create(@NotNull JavaPlugin caller,
+    public  static @NotNull DemocracyLibApi create(@NotNull JavaPlugin caller,
                                           @NotNull Object leader,
                                           @NotNull DemocracyBootstrap.ProviderFactory providerFactory,
                                           boolean logging) {
         // leader param kept for binary compatibility with older call sites; current implementation re-reads via anchor.
-        return new ReflectionBridgeApi(caller, providerFactory, logging);
+        return new DemocracyLibReflectiveApi(caller, providerFactory, logging);
     }
 
     @Override
     public <PluginType extends Plugin> @NotNull MojangService<PluginType> getMojangService(@NotNull PluginType plugin) {
-        Object leaderService = invokeLeaderByContractId(BridgeContract.Ids.LibApi.GET_MOJANG_SERVICE, new Object[]{plugin});
-        return ServiceProxies.mojangProxy(leaderService);
+        Object leaderService = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyLibApi.getMojangService__Plugin, new Object[]{plugin});
+        return DemocracyServiceProxies.mojangProxy(leaderService);
     }
 
     @Override
     public <PluginType extends Plugin> @NotNull GitHubGistService<PluginType> getGitHubGistService(@NotNull PluginType plugin) {
-        Object leaderService = invokeLeaderByContractId(BridgeContract.Ids.LibApi.GET_GITHUB_GIST_SERVICE, new Object[]{plugin});
-        return ServiceProxies.githubProxy(leaderService);
+        Object leaderService = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyLibApi.getGitHubGistService__Plugin, new Object[]{plugin});
+        return DemocracyServiceProxies.githubProxy(leaderService);
     }
 
     @Override
     public <PluginType extends Plugin> @NotNull GitHubGistService<PluginType> getGitHubGistService(@NotNull PluginType plugin, @NotNull GitHubGistConfiguration configuration) {
-        Object leaderService = invokeLeaderByContractId(BridgeContract.Ids.LibApi.GET_GITHUB_GIST_SERVICE_WITH_CONFIG, new Object[]{plugin, configuration});
-        return ServiceProxies.githubProxy(leaderService);
+        Object leaderService = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyLibApi.getGitHubGistService__Plugin__GitHubGistConfiguration, new Object[]{plugin, configuration});
+        return DemocracyServiceProxies.githubProxy(leaderService);
     }
 
     @Override
@@ -77,16 +83,30 @@ final class ReflectionBridgeApi implements DemocracyLibApi {
 
             Object leaderMgr = null;
             try {
-                var anchor = JvmAnchor.anchorMap();
+                var anchor = DemocracyLibJvmAnchor.anchorMap();
                 leaderMgr = anchor.get(DemocracyBootstrap.KEY_LEADER_SERVICE_MANAGER);
             } catch (Throwable ignored) {
             }
             if (leaderMgr == null) {
-                leaderMgr = invokeLeaderByContractId(BridgeContract.Ids.LibApi.GET_SERVICE_MANAGER, new Object[]{});
+                leaderMgr = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyLibApi.getServiceManager, new Object[]{});
             }
 
-            serviceManagerProxy = new BridgeServiceManager(leaderMgr);
+            serviceManagerProxy = new DemocracyBridgeServiceManager(leaderMgr);
             return serviceManagerProxy;
+        }
+    }
+
+    @Override
+    public @NotNull DemocracyConfigManager getConfigManager() {
+        DemocracyConfigManager existing = configManagerProxy;
+        if (existing != null) return existing;
+
+        synchronized (this) {
+            if (configManagerProxy != null) return configManagerProxy;
+
+            Object leaderConfigMgr = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyLibApi.getConfigManager, new Object[]{});
+            configManagerProxy = new DemocracyBridgeConfigManager(leaderConfigMgr);
+            return configManagerProxy;
         }
     }
 
@@ -94,13 +114,14 @@ final class ReflectionBridgeApi implements DemocracyLibApi {
     public void shutdown() {
         // Follower shutdown: detach only.
         try {
-            Map<String, Object> anchor = JvmAnchor.anchorMap();
-            ApiRegistry.unregisterFollower(anchor, caller);
+            Map<String, Object> anchor = DemocracyLibJvmAnchor.anchorMap();
+            DemocracyLibApiRegistry.unregisterFollower(anchor, caller);
         } catch (Throwable ignored) {
         }
 
         // Clear local caches.
         serviceManagerProxy = null;
+        configManagerProxy = null;
         mhCache.clear();
     }
 
@@ -115,11 +136,11 @@ final class ReflectionBridgeApi implements DemocracyLibApi {
         Object leader = DemocracyBootstrap.ensureLeader(caller, providerFactory, logging);
         Object[] actualArgs = args == null ? new Object[0] : args;
 
-        Object spec = BootstrapReflection.loadGeneratedSpec(contractId);
-        String key = BootstrapReflection.cacheKeyByContractId(contractId);
+        GeneratedBridgeContract.Spec spec = DemocracyBootstrapReflection.loadGeneratedSpec(contractId);
+        String key = DemocracyBootstrapReflection.cacheKeyByContractId(contractId);
 
         MethodHandle methodHandle = mhCache.computeIfAbsent(key, k -> {
-            Method targetMethod = BootstrapReflection.resolveByGeneratedSpec(leader.getClass(), spec);
+            Method targetMethod = DemocracyBootstrapReflection.resolveByGeneratedSpec(leader.getClass(), spec);
             try {
                 return MethodHandles.publicLookup().unreflect(targetMethod);
             } catch (IllegalAccessException e) {
@@ -144,7 +165,7 @@ final class ReflectionBridgeApi implements DemocracyLibApi {
             }
             Object retryLeader = DemocracyBootstrap.ensureLeader(caller, providerFactory, logging);
             try {
-                Method retryMethod = BootstrapReflection.resolveByGeneratedSpec(retryLeader.getClass(), spec);
+                Method retryMethod = DemocracyBootstrapReflection.resolveByGeneratedSpec(retryLeader.getClass(), spec);
                 MethodHandle retryHandle;
                 try {
                     retryHandle = MethodHandles.publicLookup().unreflect(retryMethod);

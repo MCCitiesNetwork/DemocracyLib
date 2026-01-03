@@ -1,7 +1,9 @@
 package net.democracycraft.democracyLib.internal.bootstrap;
 
 import net.democracycraft.democracyLib.api.DemocracyLibApi;
+import net.democracycraft.democracyLib.api.bootstrap.GeneratedBridgeContract;
 import net.democracycraft.democracyLib.api.bootstrap.contract.BridgeContractVersion;
+import net.democracycraft.democracyLib.internal.bootstrap.service.DemocracyLibReflectiveApi;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
@@ -20,13 +22,13 @@ import java.util.Properties;
 @BridgeContractVersion(1)
 public final class DemocracyBootstrap {
 
-    public static final String KEY_LEADER = BridgeContract.AnchorKeys.LEADER;
-    public static final String KEY_PROTOCOL = BridgeContract.AnchorKeys.PROTOCOL;
-    public static final String KEY_LEADER_PLUGIN = BridgeContract.AnchorKeys.LEADER_PLUGIN;
-    public static final String KEY_LEADER_PLUGIN_REF = BridgeContract.AnchorKeys.LEADER_PLUGIN_REF;
-    public static final String KEY_LEADER_CLASS = BridgeContract.AnchorKeys.LEADER_CLASS;
-    public static final String KEY_LEADER_SERVICE_MANAGER = BridgeContract.AnchorKeys.LEADER_SERVICE_MANAGER;
-    public static final String KEY_PROVIDER_FACTORY = BridgeContract.AnchorKeys.PROVIDER_FACTORY;
+    public static final String KEY_LEADER = GeneratedBridgeContract.AnchorKeys.LEADER;
+    public static final String KEY_PROTOCOL = GeneratedBridgeContract.AnchorKeys.PROTOCOL;
+    public static final String KEY_LEADER_PLUGIN = GeneratedBridgeContract.AnchorKeys.LEADER_PLUGIN;
+    public static final String KEY_LEADER_PLUGIN_REF = GeneratedBridgeContract.AnchorKeys.LEADER_PLUGIN_REF;
+    public static final String KEY_LEADER_CLASS = GeneratedBridgeContract.AnchorKeys.LEADER_CLASS;
+    public static final String KEY_LEADER_SERVICE_MANAGER = GeneratedBridgeContract.AnchorKeys.LEADER_SERVICE_MANAGER;
+    public static final String KEY_PROVIDER_FACTORY = GeneratedBridgeContract.AnchorKeys.PROVIDER_FACTORY;
 
     private DemocracyBootstrap() {
     }
@@ -56,10 +58,10 @@ public final class DemocracyBootstrap {
         Objects.requireNonNull(plugin, "plugin");
         Objects.requireNonNull(providerFactory, "providerFactory");
 
-        BootstrapLogger log = new BootstrapLogger(logging, plugin);
+        DemocracyBootstrapLogger log = new DemocracyBootstrapLogger(logging, plugin);
 
-        Map<String, Object> anchor = JvmAnchor.anchorMap();
-        Object lock = JvmAnchor.lock();
+        Map<String, Object> anchor = DemocracyLibJvmAnchor.anchorMap();
+        Object lock = DemocracyLibJvmAnchor.lock();
 
         synchronized (lock) {
             // Keep a provider factory reference in the anchor for on-demand re-election.
@@ -76,11 +78,11 @@ public final class DemocracyBootstrap {
                     return providerFactory.createLeader(plugin);
                 }
 
-                DemocracyLibApi api = ReflectionBridgeApi.create(plugin, leader, providerFactory, logging);
-                ApiRegistry.registerFollower(anchor, api, plugin);
+                DemocracyLibApi api = DemocracyLibReflectiveApi.create(plugin, leader, providerFactory, logging);
+                DemocracyLibApiRegistry.registerFollower(anchor, api, plugin);
 
                 if (logging) {
-                    int followers = ApiRegistry.followerCount(anchor);
+                    int followers = DemocracyLibApiRegistry.followerCount(anchor);
                     String leaderFingerprint = leader.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(leader));
                     log.info("Connected as follower. leader=" + leaderFingerprint + ", protocol=" + PROTOCOL_VERSION + ", followers=" + followers);
                     log.info("Shared resources check: Mojang cache + thread pool are owned by the leader runtime. " +
@@ -95,7 +97,7 @@ public final class DemocracyBootstrap {
 
             if (logging) {
                 String leaderFingerprint = createdLeader.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(createdLeader));
-                log.info("Elected as leader. leader=" + leaderFingerprint + ", protocol=" + PROTOCOL_VERSION);
+                log.info("Elected as leader. leaderPlugin=" + plugin.getClass().getName() + " leaderPrint=" + leaderFingerprint + ", protocol=" + PROTOCOL_VERSION);
                 log.info("Shared resources initialized in leader runtime: commonPool (ExecutorService) + caches.");
             }
 
@@ -103,16 +105,16 @@ public final class DemocracyBootstrap {
         }
     }
 
-    static @NotNull Object ensureLeader(@NotNull JavaPlugin caller,
+    public static @NotNull Object ensureLeader(@NotNull JavaPlugin caller,
                                         @NotNull ProviderFactory providerFactory,
                                         boolean logging) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(providerFactory, "providerFactory");
 
-        BootstrapLogger log = new BootstrapLogger(logging, caller);
+        DemocracyBootstrapLogger log = new DemocracyBootstrapLogger(logging, caller);
 
-        Map<String, Object> anchor = JvmAnchor.anchorMap();
-        Object lock = JvmAnchor.lock();
+        Map<String, Object> anchor = DemocracyLibJvmAnchor.anchorMap();
+        Object lock = DemocracyLibJvmAnchor.lock();
 
         synchronized (lock) {
             Object leader = anchor.get(KEY_LEADER);

@@ -1,4 +1,4 @@
-package net.democracycraft.democracyLib.internal.bootstrap;
+package net.democracycraft.democracyLib.internal.bootstrap.proxy;
 
 import net.democracycraft.democracyLib.internal.bootstrap.handler.GenericDemocracyBootstrapHandler;
 
@@ -6,21 +6,21 @@ import java.lang.reflect.Proxy;
 
 /**
  * Creates best-effort proxies for leader-owned service objects.
- *
+ * <p></p>
  * This must only be used when the requested API/interface type is visible to the caller's classloader.
  */
-final class ServiceProxyFactory {
+public class DemocracyServiceProxyFactory {
 
-    private ServiceProxyFactory() {
+    private DemocracyServiceProxyFactory() {
     }
 
     @SuppressWarnings("unchecked")
-    static <T> T proxyAs(Class<T> api, Object leaderService) {
+    public static <ApiType> ApiType proxyAs(Class<ApiType> api, Object leaderService) {
         if (api.isInstance(leaderService)) {
-            return (T) leaderService;
+            return (ApiType) leaderService;
         }
 
-        return (T) Proxy.newProxyInstance(
+        return (ApiType) Proxy.newProxyInstance(
                 api.getClassLoader(),
                 new Class[]{api},
                 new GenericDemocracyBootstrapHandler(leaderService)
