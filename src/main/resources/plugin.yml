@@ -1,6 +1,0 @@
-name: DemocracyLib
-version: '1.0.0'
-main: net.democracycraft.democracyLib.DemocracyLib
-api-version: '1.21'
-load: STARTUP
-authors: [ Alepando ]
