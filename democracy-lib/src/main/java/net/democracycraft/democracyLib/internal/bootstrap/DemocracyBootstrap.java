@@ -98,7 +98,7 @@ public final class DemocracyBootstrap {
             publishLeaderState(anchor, plugin, createdLeader, providerFactory);
 
             if (logging) {
-                String leaderFingerprint = createdLeader.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(createdLeader));
+                String leaderFingerprint = "@" + Integer.toHexString(System.identityHashCode(createdLeader));
                 log.info("Elected as leader. leaderPlugin=" + plugin.getClass().getName() + " leaderPrint=" + leaderFingerprint + ", protocol=" + PROTOCOL_VERSION);
                 log.info("Shared resources initialized in leader runtime: commonPool (ExecutorService) + caches.");
             }
