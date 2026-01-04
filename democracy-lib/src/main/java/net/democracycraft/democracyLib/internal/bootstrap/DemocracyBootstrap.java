@@ -70,6 +70,8 @@ public final class DemocracyBootstrap {
 
             Object leader = anchor.get(KEY_LEADER);
             Object protocol = anchor.get(KEY_PROTOCOL);
+            Object leaderPluginNameObj = anchor.get(KEY_LEADER_PLUGIN);
+            String leaderPluginName = (leaderPluginNameObj != null) ? String.valueOf(leaderPluginNameObj) : "<unknown>";
 
             if (leader != null) {
                 int leaderProtocol = (protocol instanceof Integer i) ? i : -1;
@@ -84,7 +86,7 @@ public final class DemocracyBootstrap {
                 if (logging) {
                     int followers = DemocracyLibApiRegistry.followerCount(anchor);
                     String leaderFingerprint = "@" + Integer.toHexString(System.identityHashCode(leader));
-                    log.info("Connected as follower. leaderPlugin=" + leader.getClass().getName() + "leader=" + leaderFingerprint + ", protocol=" + PROTOCOL_VERSION + ", followers=" + followers);
+                    log.info("Connected as follower. leaderPlugin=" + leaderPluginName + " leader=" + leaderFingerprint + ", protocol=" + PROTOCOL_VERSION + ", followers=" + followers);
                     log.info("Shared resources check: Mojang cache + thread pool are owned by the leader runtime. " +
                             "If both plugins point to the same leader fingerprint, they are sharing those resources.");
                 }
