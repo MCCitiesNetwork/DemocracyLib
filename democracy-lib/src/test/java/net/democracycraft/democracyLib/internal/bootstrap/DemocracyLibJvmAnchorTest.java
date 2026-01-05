@@ -1,7 +1,9 @@
 package net.democracycraft.democracyLib.internal.bootstrap;
 
 import net.democracycraft.democracyLib.api.bootstrap.GeneratedBridgeContract;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -15,6 +17,16 @@ class DemocracyLibJvmAnchorTest {
     void cleanup() {
         // Avoid leaking state across tests/JVM runs.
         System.getProperties().remove(DemocracyLibJvmAnchor.ANCHOR_KEY_V1);
+    }
+
+    @AfterEach
+    void logTestPassed(TestInfo testInfo) {
+        System.out.println("[TEST PASS] " + testInfo.getDisplayName());
+    }
+
+    @AfterAll
+    static void logClassPassed() {
+        System.out.println("[TEST PASS] DemocracyLibJvmAnchorTest");
     }
 
     @Test
@@ -38,4 +50,3 @@ class DemocracyLibJvmAnchorTest {
         assertNotNull(anchor.get(GeneratedBridgeContract.AnchorKeys.LOCK));
     }
 }
-

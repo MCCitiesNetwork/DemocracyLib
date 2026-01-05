@@ -25,7 +25,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Run Unit Tests
-        run: ./gradlew :democracy-lib:test
+        run: ./gradlew test --info
 
       - name: Build Shadow JAR
         run: ./gradlew :democracy-lib:shadowJar

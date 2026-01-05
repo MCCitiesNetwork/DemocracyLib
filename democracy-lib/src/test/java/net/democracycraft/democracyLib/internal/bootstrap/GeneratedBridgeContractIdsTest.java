@@ -1,6 +1,9 @@
 package net.democracycraft.democracyLib.internal.bootstrap;
 
 import net.democracycraft.democracyLib.api.bootstrap.GeneratedBridgeContract;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.Test;
 import java.util.Map;
 
@@ -23,5 +26,15 @@ class GeneratedBridgeContractIdsTest {
             GeneratedBridgeContract.Spec s = GeneratedBridgeContract.Methods.spec(id);
             assertNotNull(s, "Missing spec for generated method id: " + id);
         }
+    }
+
+    @AfterEach
+    void logTestPassed(TestInfo testInfo) {
+        System.out.println("[TEST PASS] " + testInfo.getDisplayName());
+    }
+
+    @AfterAll
+    static void logClassPassed() {
+        System.out.println("[TEST PASS] GeneratedBridgeContractIdsTest");
     }
 }

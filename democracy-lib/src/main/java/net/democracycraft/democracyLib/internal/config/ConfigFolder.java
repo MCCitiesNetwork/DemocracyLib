@@ -8,9 +8,9 @@ import java.io.File;
 
 /**
  * Folder wrapper used by the configuration loader.
- *
+ * <p></p>
  * Note: DemocracyLib is a shaded library (not a Bukkit plugin). In library mode we pick a stable
- * base directory by anchoring to a loaded plugin's data folder.
+ * base directory by anchoring to a loaded plugin's data folder
  */
 public final class ConfigFolder {
 

@@ -9,17 +9,17 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * Global JVM anchor shared across all PluginClassLoaders.
+ * Global JVM anchor shared across all plugin class loaders
  * <p>
  * Uses System properties to store a bootstrap-loaded ConcurrentHashMap,
- * which can safely be used as a cross-classloader rendezvous point.
+ * which can safely be used as a cross-classloader rendezvous point
  */
 public final class DemocracyLibJvmAnchor {
 
     private DemocracyLibJvmAnchor() {}
 
     /**
-     * Versioned key to reduce collision risk.
+     * Versioned key to reduce collision risk
      */
     static final String ANCHOR_KEY_V1 = "net.democracycraft.democracyLib.anchor.v1";
 
@@ -37,7 +37,7 @@ public final class DemocracyLibJvmAnchor {
             }
 
             if (existing instanceof Map<?, ?> map) {
-                // defensive migration: dont trust mutability/thread-safety of foreign maps.
+                // defensive migration
                 ConcurrentMap<String, Object> migrated = new ConcurrentHashMap<>((Map<String, Object>) map);
                 migrated.putIfAbsent(GeneratedBridgeContract.AnchorKeys.LOCK, new Object());
                 props.put(ANCHOR_KEY_V1, migrated);
