@@ -1,7 +1,6 @@
 package net.democracycraft.democracyLib.internal.dialog.factory;
 
 import io.papermc.paper.dialog.Dialog;
-import io.papermc.paper.dialog.DialogResponseView;
 import io.papermc.paper.registry.data.InlinedRegistryBuilderProvider;
 import io.papermc.paper.registry.data.dialog.ActionButton;
 import io.papermc.paper.registry.data.dialog.DialogBase;
@@ -15,7 +14,6 @@ import net.democracycraft.democracyLib.api.dialog.DialogConfigProvider;
 import net.democracycraft.democracyLib.api.dialog.DialogInput;
 import net.democracycraft.democracyLib.api.dialog.factory.DialogConfig;
 import net.democracycraft.democracyLib.api.dialog.factory.DialogContext;
-import net.kyori.adventure.audience.Audience;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickCallback;
 import org.jetbrains.annotations.Contract;
@@ -250,10 +248,6 @@ public final class DialogFactoryImp {
         if (m.getParameterCount() != 1 || m.getParameterTypes()[0] != DialogContext.class) {
             logAndThrow("@DialogButtonHandler method must accept exactly one parameter of type DialogContext: " + sig(m));
         }
-    }
-
-    private static @NotNull DialogContext createContext(Audience audience, DialogResponseView response) {
-        return new DialogContextImp(audience, response);
     }
 
     private static <T> T invoke(Object controller, @NotNull Method method, Class<T> expectedType) {
