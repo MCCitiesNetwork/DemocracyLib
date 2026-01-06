@@ -3,6 +3,7 @@ package net.democracycraft.democracyLib.internal.dialog.factory;
 import io.papermc.paper.registry.data.dialog.ActionButton;
 import io.papermc.paper.registry.data.dialog.action.DialogAction;
 import net.democracycraft.democracyLib.api.dialog.Dialog;
+import net.democracycraft.democracyLib.api.dialog.DialogBody;
 import net.democracycraft.democracyLib.api.dialog.DialogButton;
 import net.democracycraft.democracyLib.api.dialog.DialogButtonHandler;
 import net.democracycraft.democracyLib.api.dialog.DialogConfigProvider;
@@ -44,6 +45,11 @@ class DialogFactoryImpTest {
                     .build();
         }
 
+        @DialogBody(id = "body-1", order = 0)
+        public io.papermc.paper.registry.data.dialog.body.DialogBody body() {
+            return io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(Component.text("Hello"));
+        }
+
         @DialogButtonHandler(buttonId = "ok", uses = 1)
         public void onOk(DialogContext ctx) {
             assertNotNull(ctx);
@@ -73,6 +79,9 @@ class DialogFactoryImpTest {
 
         assertEquals(1, def.buttons().size());
         assertEquals("ok", def.buttons().getFirst().id());
+
+        assertEquals(1, def.body().size());
+        assertEquals("body-1", def.body().getFirst().id());
 
         assertEquals(1, def.handlers().size());
         DialogDefinition.ButtonHandlerMethod handler = def.handlers().getFirst();

@@ -8,6 +8,7 @@ import io.papermc.paper.registry.data.dialog.DialogInstancesProvider;
 import io.papermc.paper.registry.data.dialog.action.DialogAction;
 import io.papermc.paper.registry.data.dialog.action.DialogActionCallback;
 import io.papermc.paper.registry.data.dialog.type.DialogType;
+import net.democracycraft.democracyLib.api.dialog.DialogBody;
 import net.democracycraft.democracyLib.api.dialog.DialogButton;
 import net.democracycraft.democracyLib.api.dialog.DialogButtonHandler;
 import net.democracycraft.democracyLib.api.dialog.DialogConfigProvider;
@@ -54,6 +55,7 @@ public final class DialogFactoryImp {
             throw new IllegalArgumentException("Controller class is missing @Dialog: " + type.getName());
         }
 
+        List<DialogDefinition.BodyMethod> body = new ArrayList<>();
         List<DialogDefinition.InputMethod> inputs = new ArrayList<>();
         List<DialogDefinition.ButtonMethod> buttons = new ArrayList<>();
         List<DialogDefinition.ButtonHandlerMethod> handlers = new ArrayList<>();
@@ -61,8 +63,16 @@ public final class DialogFactoryImp {
         Map<String, Method> handlerMethodByButtonId = new HashMap<>();
 
         for (Method method : type.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(DialogBody.class)) {
+                if (!io.papermc.paper.registry.data.dialog.body.DialogBody.class.isAssignableFrom(method.getReturnType())) {
+                    logAndThrow("@DialogBody can only be used on methods returning Paper DialogBody (or subclass): " + sig(method));
+                }
+                DialogBody dialogBodyAnnotation = method.getAnnotation(DialogBody.class);
+                method.setAccessible(true);
+                body.add(new DialogDefinition.BodyMethod(dialogBodyAnnotation.id(), dialogBodyAnnotation.order(), method));
+            }
+
             if (method.isAnnotationPresent(DialogInput.class)) {
-                validateNoParams(method);
                 if (!io.papermc.paper.registry.data.dialog.input.DialogInput.class.isAssignableFrom(method.getReturnType())) {
                     logAndThrow("@DialogInput can only be used on methods returning Paper DialogInput (or subclass): " + sig(method));
                 }
@@ -72,7 +82,6 @@ public final class DialogFactoryImp {
             }
 
             if (method.isAnnotationPresent(DialogButton.class)) {
-                validateNoParams(method);
                 if (!ActionButton.class.isAssignableFrom(method.getReturnType())) {
                     logAndThrow("@DialogButton can only be used on methods returning ActionButton (or subclass): " + sig(method));
                 }
@@ -99,6 +108,7 @@ public final class DialogFactoryImp {
             }
         }
 
+        body.sort(Comparator.comparingInt(DialogDefinition.BodyMethod::order));
         inputs.sort(Comparator.comparingInt(DialogDefinition.InputMethod::order));
         buttons.sort(Comparator.comparingInt(DialogDefinition.ButtonMethod::order));
 
@@ -110,6 +120,7 @@ public final class DialogFactoryImp {
                 dialogAnn.canBeClosedWithEscape(),
                 title,
                 dialogConfig,
+                List.copyOf(body),
                 List.copyOf(inputs),
                 List.copyOf(buttons),
                 List.copyOf(handlers)
@@ -125,6 +136,15 @@ public final class DialogFactoryImp {
                 .pause(true)
                 .afterAction(DialogBase.DialogAfterAction.CLOSE);
 
+        if (!definition.body().isEmpty()) {
+            List<io.papermc.paper.registry.data.dialog.body.DialogBody> builtBody = new ArrayList<>();
+            for (DialogDefinition.BodyMethod bm : definition.body()) {
+                builtBody.add(invoke(controller, bm.method(), io.papermc.paper.registry.data.dialog.body.DialogBody.class));
+            }
+            base.body(builtBody);
+        }
+
+        // Inputs first (Minecraft UI: inputs render at the top of the input section)
         if (!definition.inputs().isEmpty()) {
             List<io.papermc.paper.registry.data.dialog.input.DialogInput> builtInputs = new ArrayList<>();
             for (DialogDefinition.InputMethod im : definition.inputs()) {
@@ -235,12 +255,6 @@ public final class DialogFactoryImp {
         }
     }
 
-    private static void validateNoParams(@NotNull Method m) {
-        if (m.getParameterCount() != 0) {
-            logAndThrow("Method must not declare parameters: " + sig(m));
-        }
-    }
-
     private static void validateHandlerSignature(@NotNull Method m) {
         if (m.getReturnType() != void.class) {
             logAndThrow("@DialogButtonHandler method must be void: " + sig(m));
@@ -252,7 +266,8 @@ public final class DialogFactoryImp {
 
     private static <T> T invoke(Object controller, @NotNull Method method, Class<T> expectedType) {
         try {
-            Object value = method.invoke(controller);
+            Object[] args = defaultArgs(method.getParameterTypes());
+            Object value = method.invoke(controller, args);
             if (value == null) {
                 throw new IllegalStateException("Method returned null: " + sig(method));
             }
@@ -264,6 +279,31 @@ public final class DialogFactoryImp {
             LOGGER.error("Failed to invoke {}", sig(method), e);
             throw new IllegalStateException("Failed to invoke: " + sig(method), e);
         }
+    }
+
+    private static Object[] defaultArgs(Class<?>[] parameterTypes) {
+        if (parameterTypes.length == 0) return new Object[0];
+
+        Object[] args = new Object[parameterTypes.length];
+        for (int i = 0; i < parameterTypes.length; i++) {
+            args[i] = defaultValue(parameterTypes[i]);
+        }
+        return args;
+    }
+
+    private static Object defaultValue(Class<?> type) {
+        if (!type.isPrimitive()) return null;
+
+        if (type == boolean.class) return false;
+        if (type == byte.class) return (byte) 0;
+        if (type == short.class) return (short) 0;
+        if (type == int.class) return 0;
+        if (type == long.class) return 0L;
+        if (type == float.class) return 0f;
+        if (type == double.class) return 0d;
+        if (type == char.class) return (char) 0;
+
+        return null;
     }
 
     private static void logAndThrow(String message) {

@@ -18,10 +18,14 @@ public record DialogDefinition(
         boolean canCloseWithEscape,
         @NotNull Component title,
         @Nullable DialogConfig config,
+        @NotNull List<BodyMethod> body,
         @NotNull List<InputMethod> inputs,
         @NotNull List<ButtonMethod> buttons,
         @NotNull List<ButtonHandlerMethod> handlers
 ) {
+
+    public record BodyMethod(@NotNull String id, int order, @NotNull Method method) {
+    }
 
     public record InputMethod(@NotNull String id, int order, @NotNull Method method) {
     }
@@ -32,4 +36,3 @@ public record DialogDefinition(
     public record ButtonHandlerMethod(@NotNull String buttonId, int uses, @NotNull Method method) {
     }
 }
-

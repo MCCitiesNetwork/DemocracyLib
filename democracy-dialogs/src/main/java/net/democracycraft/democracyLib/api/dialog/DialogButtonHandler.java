@@ -1,11 +1,18 @@
 package net.democracycraft.democracyLib.api.dialog;
 
+import net.democracycraft.democracyLib.api.dialog.factory.DialogContext;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
+/**
+ * Marks a method as the click handler for a {@link DialogButton}.
+ * <p>
+ * The annotated method must be {@code void} and accept exactly one parameter of type
+ * {@link DialogContext}.
+ */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 public @interface DialogButtonHandler {
