@@ -17,93 +17,132 @@ final class DialogReflection {
     private DialogReflection() {
     }
 
+    /**
+     * Collect all methods from the given class, its superclasses and interfaces.
+     * In case of method overrides, the most specific method is kept.
+     *
+     * @param type class to collect methods from
+     * @return map of method keys to methods
+     */
     static @NotNull Map<String, Method> collectAllMethods(Class<?> type) {
         LinkedHashMap<String, Method> methods = new LinkedHashMap<>();
+        Set<Class<?>> visitedInterfaces = new HashSet<>();
 
-        // Class hierarchy
         for (Class<?> clazz = type; clazz != null && clazz != Object.class; clazz = clazz.getSuperclass()) {
+
             for (Method method : clazz.getDeclaredMethods()) {
                 methods.putIfAbsent(methodKey(method), method);
             }
-        }
 
-        // Interfaces
-        Deque<Class<?>> queue = new ArrayDeque<>();
-        Set<Class<?>> seen = new LinkedHashSet<>();
-
-        queue.add(type);
-        while (!queue.isEmpty()) {
-            Class<?> current = queue.removeFirst();
-            if (!seen.add(current)) continue;
-
-            for (Class<?> iface : current.getInterfaces()) {
-                if (seen.add(iface)) {
-                    for (Method m : iface.getDeclaredMethods()) {
-                        methods.putIfAbsent(methodKey(m), m);
-                    }
-                    queue.addLast(iface);
-                }
-            }
-
-            Class<?> superClass = current.getSuperclass();
-            if (superClass != null && superClass != Object.class) {
-                queue.addLast(superClass);
-            }
+            collectInterfaceMethods(clazz.getInterfaces(), methods, visitedInterfaces);
         }
 
         return methods;
     }
 
-    static <A extends Annotation> @Nullable A findAnnotation(Method method, Class<?> concreteType, Class<A> annotationType) {
-        A annotation = method.getAnnotation(annotationType);
+    /**
+     * Collect methods from interfaces using BFS
+     * @param interfaces array of interfaces to start from
+     * @param methods map to collect methods into
+     * @param visited set of already visited interfaces
+     */
+    private static void collectInterfaceMethods(Class<?> @NotNull [] interfaces, Map<String, Method> methods, Set<Class<?>> visited) {
+        if (interfaces.length == 0) return;
+
+        Deque<Class<?>> queue = new ArrayDeque<>(Arrays.asList(interfaces));
+
+        while (!queue.isEmpty()) {
+            Class<?> iface = queue.poll();
+
+            if (!visited.add(iface)) continue;
+
+            for (Method method : iface.getDeclaredMethods()) {
+                methods.putIfAbsent(methodKey(method), method);
+            }
+
+            Collections.addAll(queue, iface.getInterfaces());
+        }
+    }
+
+    static <AnnotationType extends Annotation> @Nullable AnnotationType findAnnotation(@NotNull Method method, Class<?> concreteType, Class<AnnotationType> annotationType) {
+        AnnotationType annotation = method.getAnnotation(annotationType);
         if (annotation != null) return annotation;
         return findAnnotationInSupertypes(method, concreteType, annotationType);
     }
 
-    private static <A extends Annotation> @Nullable A findAnnotationInSupertypes(Method method, Class<?> concreteType, Class<A> annType) {
-        try {
-            var name = method.getName();
-            var params = method.getParameterTypes();
+    /**
+     * Find annotation in supertypes
+     * @param method method to find annotation for
+     * @param concreteType concrete class to start searching from
+     * @param annType annotation type to find
+     * @return found annotation or null
+     * @param <AnnotationType> annotation type
+     */
+    private static <AnnotationType extends Annotation> @Nullable AnnotationType findAnnotationInSupertypes(@NotNull Method method, Class<?> concreteType, Class<AnnotationType> annType) {
+        Set<Class<?>> visitedInterfaces = new HashSet<>();
 
-            for (Class<?> clazz = concreteType; clazz != null && clazz != Object.class; clazz = clazz.getSuperclass()) {
-                // interfaces
-                A annotationOnInterfaces = findAnnotationOnInterfaces(clazz.getInterfaces(), name, params, annType);
-                if (annotationOnInterfaces != null) return annotationOnInterfaces;
+        String name = method.getName();
+        Class<?>[] params = method.getParameterTypes();
 
-                // superclass declared method
-                Class<?> superclass = clazz.getSuperclass();
-                if (superclass != null && superclass != Object.class) {
-                    try {
-                        Method declaredMethod = superclass.getDeclaredMethod(name, params);
-                        A methodAnnotation = declaredMethod.getAnnotation(annType);
-                        if (methodAnnotation != null) return methodAnnotation;
-                    } catch (NoSuchMethodException ignored) {
-                    }
-                }
+        Class<?> current = concreteType;
+
+        while (current != null && current != Object.class) {
+            try {
+                Method declaredMethod = current.getDeclaredMethod(name, params);
+                AnnotationType methodAnnotation = declaredMethod.getAnnotation(annType);
+                if (methodAnnotation != null) return methodAnnotation;
+            } catch (NoSuchMethodException ignored) {
             }
-        } catch (Exception e) {
-            LOGGER.warn("Failed to resolve inherited annotation {} for method {}#{}", annType.getName(), method.getDeclaringClass().getName(), method.getName(), e);
+
+            AnnotationType annotationOnInterfaces = findAnnotationOnInterfaces(
+                    current.getInterfaces(), name, params, annType, visitedInterfaces
+            );
+
+            if (annotationOnInterfaces != null) return annotationOnInterfaces;
+
+            current = current.getSuperclass();
         }
 
         return null;
     }
 
-    private static <A extends Annotation> @Nullable A findAnnotationOnInterfaces(Class<?>[] interfaces, String name, Class<?>[] params, Class<A> annType) {
-        for (Class<?> iface : interfaces) {
+    /**
+     * Find annotation on interfaces using BFS
+     * @param interfaces array of interfaces to start searching from
+     * @param name method name
+     * @param params method parameter types
+     * @param annType annotation type to find
+     * @param visited set of already visited interfaces
+     * @return found annotation or null
+     * @param <AnnotationType> annotation type
+     */
+    private static <AnnotationType extends Annotation> @Nullable AnnotationType findAnnotationOnInterfaces(
+            Class<?> @NotNull [] interfaces,
+            String name,
+            Class<?>[] params,
+            Class<AnnotationType> annType,
+            Set<Class<?>> visited
+    ) {
+        Queue<Class<?>> queue = new ArrayDeque<>(Arrays.asList(interfaces));
+
+        while (!queue.isEmpty()) {
+            Class<?> iface = queue.poll();
+
+            if (!visited.add(iface)) continue;
+
             try {
                 Method method = iface.getDeclaredMethod(name, params);
-                A annotation = method.getAnnotation(annType);
+                AnnotationType annotation = method.getAnnotation(annType);
                 if (annotation != null) return annotation;
             } catch (NoSuchMethodException ignored) {
             }
 
-            A deep = findAnnotationOnInterfaces(iface.getInterfaces(), name, params, annType);
-            if (deep != null) return deep;
+            Collections.addAll(queue, iface.getInterfaces());
         }
         return null;
     }
 
-    private static String methodKey(Method method) {
+    private static @NotNull String methodKey(@NotNull Method method) {
         StringBuilder stringBuilder = new StringBuilder();
         stringBuilder.append(method.getName()).append('(');
         Class<?>[] parameterTypes = method.getParameterTypes();
@@ -115,7 +154,7 @@ final class DialogReflection {
         return stringBuilder.toString();
     }
 
-    static String signature(Method method) {
+    static @NotNull String signature(@NotNull Method method) {
         return method.getDeclaringClass().getName() + "#" + method.getName() + "()";
     }
 
