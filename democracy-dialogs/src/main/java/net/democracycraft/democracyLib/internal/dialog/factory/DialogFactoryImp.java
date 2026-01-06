@@ -33,6 +33,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import static net.democracycraft.democracyLib.internal.dialog.factory.DialogReflection.invoke;
 import static net.democracycraft.democracyLib.internal.dialog.factory.DialogReflection.signature;
@@ -88,8 +89,8 @@ public final class DialogFactoryImp {
 
             DialogButton dialogButtonAnnotation = DialogReflection.findAnnotation(method, type, DialogButton.class);
             if (dialogButtonAnnotation != null) {
-                if (!ActionButton.class.isAssignableFrom(method.getReturnType())) {
-                    logAndThrow("@DialogButton can only be used on methods returning ActionButton (or subclass): " + signature(method));
+                if (!ActionButton.Builder.class.isAssignableFrom(method.getReturnType())) {
+                    logAndThrow("@DialogButton can only be used on methods returning ActionButton.Builder: " + signature(method));
                 }
                 method.setAccessible(true);
                 buttons.add(new DialogDefinition.ButtonMethod(dialogButtonAnnotation.id(), dialogButtonAnnotation.order(), method));
@@ -173,8 +174,18 @@ public final class DialogFactoryImp {
 
         List<ActionButton> builtButtons = new ArrayList<>();
         for (DialogDefinition.ButtonMethod buttonMethod : definition.buttons()) {
-            ActionButton rawButton = invoke(controller, buttonMethod.method(), ActionButton.class);
             DialogDefinition.ButtonHandlerMethod handlerMethod = handlerByButtonId.get(buttonMethod.id());
+
+            // Get the raw object (must be ActionButton.Builder)
+            Object result = invoke(controller, buttonMethod.method(), Object.class);
+
+            ActionButton.Builder builder;
+
+            if (result instanceof ActionButton.Builder b) {
+                builder = b;
+            } else {
+                throw new IllegalStateException("Method " + signature(buttonMethod.method()) + " returned unexpected type: " + result.getClass().getName());
+            }
 
             if (handlerMethod != null) {
                 Method handler = handlerMethod.method();
@@ -199,14 +210,11 @@ public final class DialogFactoryImp {
                         ClickCallback.Options.builder().uses(uses).build()
                 );
 
-                ActionButton replaced = ActionButton.builder(rawButton.label())
-                        .tooltip(rawButton.tooltip())
-                        .action(action)
-                        .build();
-                builtButtons.add(replaced);
-            } else {
-                builtButtons.add(rawButton);
+                // Inject action into builder
+                builder.action(action);
             }
+
+            builtButtons.add(builder.build());
         }
 
         return InlinedRegistryBuilderProvider.instance().createDialog(factory -> {
@@ -233,7 +241,7 @@ public final class DialogFactoryImp {
      * Returns the DialogConfig provided by the controller (if any)
      */
     private static @Nullable DialogConfig resolveDialogConfig(@NotNull Object controller) {
-        Field configField = DialogReflection.findSingleFieldWithAnnotation(controller.getClass(), DialogConfigProvider.class);
+        Field configField = DialogReflection.findFieldWithAnnotation(controller.getClass(), DialogConfigProvider.class);
 
         if (configField == null) return null;
 
@@ -255,16 +263,16 @@ public final class DialogFactoryImp {
         }
     }
 
-    private static void validateHandlerSignature(@NotNull Method m) {
-        if (m.getReturnType() != void.class) {
-            logAndThrow("@DialogButtonHandler method must be void: " + signature(m));
+    private static void validateHandlerSignature(@NotNull Method method) {
+        if (method.getReturnType() != void.class) {
+            logAndThrow("@DialogButtonHandler method must be void: " + signature(method));
         }
-        if (m.getParameterCount() != 1 || m.getParameterTypes()[0] != DialogContext.class) {
-            logAndThrow("@DialogButtonHandler method must accept exactly one parameter of type DialogContext: " + signature(m));
+        if (method.getParameterCount() != 1 || method.getParameterTypes()[0] != DialogContext.class) {
+            logAndThrow("@DialogButtonHandler method must accept exactly one parameter of type DialogContext: " + signature(method));
         }
     }
 
-    private static <T> void validateUniqueIds(List<T> items, java.util.function.Function<T, String> idExtractor, String source) {
+    private static <T> void validateUniqueIds(List<T> items, Function<T, String> idExtractor, String source) {
         Set<String> ids = new LinkedHashSet<>();
         for (T item : items) {
             String id = idExtractor.apply(item);

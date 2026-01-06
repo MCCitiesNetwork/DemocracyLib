@@ -115,11 +115,11 @@ final class DialogReflection {
         return stringBuilder.toString();
     }
 
-    static @NotNull String signature(@NotNull Method method) {
+    static String signature(Method method) {
         return method.getDeclaringClass().getName() + "#" + method.getName() + "()";
     }
 
-    static @Nullable Field findSingleFieldWithAnnotation(Class<?> type, Class<? extends Annotation> annotationClass) {
+    static @Nullable Field findFieldWithAnnotation(Class<?> type, Class<? extends Annotation> annotationClass) {
         Field found = null;
         for (Class<?> clazz = type; clazz != null && clazz != Object.class; clazz = clazz.getSuperclass()) {
             for (Field field : clazz.getDeclaredFields()) {

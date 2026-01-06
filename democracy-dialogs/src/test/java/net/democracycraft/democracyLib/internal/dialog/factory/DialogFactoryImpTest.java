@@ -1,7 +1,7 @@
 package net.democracycraft.democracyLib.internal.dialog.factory;
 
 import io.papermc.paper.registry.data.dialog.ActionButton;
-import io.papermc.paper.registry.data.dialog.action.DialogAction;
+import io.papermc.paper.registry.data.dialog.body.PlainMessageDialogBody;
 import net.democracycraft.democracyLib.api.dialog.*;
 import net.democracycraft.democracyLib.api.dialog.factory.DialogConfig;
 import net.democracycraft.democracyLib.api.dialog.factory.DialogContext;
@@ -34,15 +34,14 @@ class DialogFactoryImpTest {
 
         @Contract(" -> new")
         @DialogButton(id = "ok", order = 0)
-        public @NotNull ActionButton okButton() {
-            // For unit tests we only need a valid button instance; use a static action.
-            return ActionButton.builder(Component.text("OK"))
-                    .action(DialogAction.commandTemplate("help"))
-                    .build();
+        public @NotNull ActionButton.Builder okButton() {
+            // Updated to return Builder as requested, removing .build() and implicit action
+            return ActionButton.builder(Component.text("OK"));
         }
 
+        @Contract(" -> new")
         @DialogBody(id = "body-1", order = 0)
-        public io.papermc.paper.registry.data.dialog.body.DialogBody body() {
+        public @NotNull PlainMessageDialogBody body() {
             return io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(Component.text("Hello"));
         }
 
@@ -55,7 +54,7 @@ class DialogFactoryImpTest {
     }
 
     @AfterEach
-    void logTestPassed(TestInfo testInfo) {
+    void logTestPassed(@NotNull TestInfo testInfo) {
         System.out.println("[TEST PASS] " + testInfo.getDisplayName());
     }
 
@@ -101,7 +100,7 @@ class DialogFactoryImpTest {
         @SuppressWarnings("unused")
         interface I {
             @DialogButton(id = "i-btn", order = 0)
-            ActionButton button();
+            ActionButton.Builder button();
 
             @DialogButtonHandler(buttonId = "i-btn")
             void onClick(DialogContext ctx);
@@ -109,11 +108,10 @@ class DialogFactoryImpTest {
 
         @Dialog(canBeClosedWithEscape = true)
         final class Controller implements I {
+            @Contract(" -> new")
             @Override
-            public ActionButton button() {
-                return ActionButton.builder(Component.text("I"))
-                        .action(DialogAction.commandTemplate("help"))
-                        .build();
+            public ActionButton.@NotNull Builder button() {
+                return ActionButton.builder(Component.text("I"));
             }
 
             @Override
@@ -139,7 +137,7 @@ class DialogFactoryImpTest {
             abstract io.papermc.paper.registry.data.dialog.body.DialogBody body();
 
             @DialogButton(id = "abs-btn", order = 0)
-            abstract ActionButton button();
+            abstract ActionButton.Builder button();
 
             @DialogButtonHandler(buttonId = "abs-btn")
             public void onClick(DialogContext ctx) {
@@ -149,16 +147,16 @@ class DialogFactoryImpTest {
 
         @Dialog(canBeClosedWithEscape = true)
         final class Controller extends Base {
+            @Contract(" -> new")
             @Override
-            public io.papermc.paper.registry.data.dialog.body.DialogBody body() {
+            public @NotNull PlainMessageDialogBody body() {
                 return io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(Component.text("Hello"));
             }
 
+            @Contract(" -> new")
             @Override
-            public ActionButton button() {
-                return ActionButton.builder(Component.text("A"))
-                        .action(DialogAction.commandTemplate("help"))
-                        .build();
+            public ActionButton.@NotNull Builder button() {
+                return ActionButton.builder(Component.text("A"));
             }
         }
 
@@ -199,5 +197,27 @@ class DialogFactoryImpTest {
         DialogDefinition def = DialogFactoryImp.parse(new Controller());
         assertEquals(1, def.inputs().size());
         assertEquals("i-in", def.inputs().getFirst().id());
+    }
+
+    @Test
+    void parse_shouldSupportActionButtonBuilder() {
+        @Dialog(canBeClosedWithEscape = true)
+        class BuilderController {
+            @Contract(" -> new")
+            @DialogButton(id = "builder-btn", order = 0)
+            public ActionButton.@NotNull Builder button() {
+                return ActionButton.builder(Component.text("Builder"));
+            }
+
+            @DialogButtonHandler(buttonId = "builder-btn")
+            public void onClick(DialogContext ctx) {
+            }
+        }
+
+        DialogDefinition def = DialogFactoryImp.parse(new BuilderController());
+        assertEquals(1, def.buttons().size());
+        assertEquals("builder-btn", def.buttons().getFirst().id());
+        assertEquals(1, def.handlers().size());
+        assertEquals("builder-btn", def.handlers().getFirst().buttonId());
     }
 }
