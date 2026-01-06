@@ -65,20 +65,16 @@ final class DialogReflection {
     }
 
     static <AnnotationType extends Annotation> @Nullable AnnotationType findAnnotation(@NotNull Method method, Class<?> concreteType, Class<AnnotationType> annotationType) {
-        AnnotationType annotation = method.getAnnotation(annotationType);
-        if (annotation != null) return annotation;
-        return findAnnotationInSupertypes(method, concreteType, annotationType);
+        Method annotatedMethod = findAnnotatedMethod(method, concreteType, annotationType);
+        return annotatedMethod != null ? annotatedMethod.getAnnotation(annotationType) : null;
     }
 
-    /**
-     * Find annotation in supertypes
-     * @param method method to find annotation for
-     * @param concreteType concrete class to start searching from
-     * @param annType annotation type to find
-     * @return found annotation or null
-     * @param <AnnotationType> annotation type
-     */
-    private static <AnnotationType extends Annotation> @Nullable AnnotationType findAnnotationInSupertypes(@NotNull Method method, Class<?> concreteType, Class<AnnotationType> annType) {
+    static @Nullable Method findAnnotatedMethod(@NotNull Method method, Class<?> concreteType, Class<? extends Annotation> annotationType) {
+        if (method.isAnnotationPresent(annotationType)) return method;
+        return findAnnotatedMethodInSupertypes(method, concreteType, annotationType);
+    }
+
+    private static @Nullable Method findAnnotatedMethodInSupertypes(@NotNull Method method, Class<?> concreteType, Class<? extends Annotation> annType) {
         Set<Class<?>> visitedInterfaces = new HashSet<>();
 
         String name = method.getName();
@@ -89,16 +85,15 @@ final class DialogReflection {
         while (current != null && current != Object.class) {
             try {
                 Method declaredMethod = current.getDeclaredMethod(name, params);
-                AnnotationType methodAnnotation = declaredMethod.getAnnotation(annType);
-                if (methodAnnotation != null) return methodAnnotation;
+                if (declaredMethod.isAnnotationPresent(annType)) return declaredMethod;
             } catch (NoSuchMethodException ignored) {
             }
 
-            AnnotationType annotationOnInterfaces = findAnnotationOnInterfaces(
+            Method annotatedOnInterface = findAnnotatedMethodOnInterfaces(
                     current.getInterfaces(), name, params, annType, visitedInterfaces
             );
 
-            if (annotationOnInterfaces != null) return annotationOnInterfaces;
+            if (annotatedOnInterface != null) return annotatedOnInterface;
 
             current = current.getSuperclass();
         }
@@ -106,21 +101,11 @@ final class DialogReflection {
         return null;
     }
 
-    /**
-     * Find annotation on interfaces using BFS
-     * @param interfaces array of interfaces to start searching from
-     * @param name method name
-     * @param params method parameter types
-     * @param annType annotation type to find
-     * @param visited set of already visited interfaces
-     * @return found annotation or null
-     * @param <AnnotationType> annotation type
-     */
-    private static <AnnotationType extends Annotation> @Nullable AnnotationType findAnnotationOnInterfaces(
+    private static @Nullable Method findAnnotatedMethodOnInterfaces(
             Class<?> @NotNull [] interfaces,
             String name,
             Class<?>[] params,
-            Class<AnnotationType> annType,
+            Class<? extends Annotation> annType,
             Set<Class<?>> visited
     ) {
         Queue<Class<?>> queue = new ArrayDeque<>(Arrays.asList(interfaces));
@@ -132,8 +117,7 @@ final class DialogReflection {
 
             try {
                 Method method = iface.getDeclaredMethod(name, params);
-                AnnotationType annotation = method.getAnnotation(annType);
-                if (annotation != null) return annotation;
+                if (method.isAnnotationPresent(annType)) return method;
             } catch (NoSuchMethodException ignored) {
             }
 

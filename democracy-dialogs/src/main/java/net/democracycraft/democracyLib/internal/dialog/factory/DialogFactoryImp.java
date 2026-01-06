@@ -33,6 +33,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Function;
 
 import static net.democracycraft.democracyLib.internal.dialog.factory.DialogReflection.invoke;
@@ -117,6 +118,11 @@ public final class DialogFactoryImp {
         validateUniqueIds(body, DialogDefinition.BodyMethod::id, "@DialogBody");
         validateUniqueIds(inputs, DialogDefinition.InputMethod::id, "@DialogInput");
         validateUniqueIds(buttons, DialogDefinition.ButtonMethod::id, "@DialogButton");
+
+        // resolve order collisions across class hierarchy
+        rebaseOrders(type, body, DialogDefinition.BodyMethod::method, DialogDefinition.BodyMethod::order, DialogDefinition.BodyMethod::withOrder, DialogBody.class);
+        rebaseOrders(type, inputs, DialogDefinition.InputMethod::method, DialogDefinition.InputMethod::order, DialogDefinition.InputMethod::withOrder, DialogInput.class);
+        rebaseOrders(type, buttons, DialogDefinition.ButtonMethod::method, DialogDefinition.ButtonMethod::order, DialogDefinition.ButtonMethod::withOrder, DialogButton.class);
 
         body.sort(Comparator.comparingInt(DialogDefinition.BodyMethod::order));
         inputs.sort(Comparator.comparingInt(DialogDefinition.InputMethod::order));
@@ -272,7 +278,7 @@ public final class DialogFactoryImp {
         }
     }
 
-    private static <T> void validateUniqueIds(List<T> items, Function<T, String> idExtractor, String source) {
+    private static <T> void validateUniqueIds(@NotNull List<T> items, Function<T, String> idExtractor, String source) {
         Set<String> ids = new LinkedHashSet<>();
         for (T item : items) {
             String id = idExtractor.apply(item);
@@ -285,5 +291,62 @@ public final class DialogFactoryImp {
     private static void logAndThrow(String message) {
         LOGGER.error(message);
         throw new IllegalArgumentException(message);
+    }
+
+    private static int classDepthFromConcrete(@NotNull Class<?> concrete, @NotNull Class<?> declaring) {
+        int depth = 0;
+        for (Class<?> clazz = concrete; clazz != null && clazz != Object.class; clazz = clazz.getSuperclass()) {
+            if (clazz == declaring) return depth;
+            depth++;
+        }
+        // Interfaces: treat as farthest (lowest priority) to avoid stealing orders from concrete classes.
+        return Integer.MAX_VALUE;
+    }
+
+    private static <T> void rebaseOrders(
+            @NotNull Class<?> concreteType,
+            @NotNull List<T> items,
+            @NotNull Function<T, Method> methodExtractor,
+            @NotNull Function<T, Integer> orderExtractor,
+            @NotNull java.util.function.BiFunction<T, Integer, T> withOrder,
+            @NotNull Class<? extends java.lang.annotation.Annotation> annotationType
+    ) {
+        if (items.size() <= 1) return;
+
+        // Sort by: most-derived first; within same declaring class, use the declared order, then signature.
+        items.sort((a, b) -> {
+            Method ma = methodExtractor.apply(a);
+            Method mb = methodExtractor.apply(b);
+
+            Method annotatedMa = DialogReflection.findAnnotatedMethod(ma, concreteType, annotationType);
+            Method annotatedMb = DialogReflection.findAnnotatedMethod(mb, concreteType, annotationType);
+
+            Class<?> declA = annotatedMa != null ? annotatedMa.getDeclaringClass() : ma.getDeclaringClass();
+            Class<?> declB = annotatedMb != null ? annotatedMb.getDeclaringClass() : mb.getDeclaringClass();
+
+            int da = classDepthFromConcrete(concreteType, declA);
+            int db = classDepthFromConcrete(concreteType, declB);
+
+            if (da != db) return Integer.compare(da, db);
+            int oa = orderExtractor.apply(a);
+            int ob = orderExtractor.apply(b);
+            if (oa != ob) return Integer.compare(oa, ob);
+            return DialogReflection.signature(ma).compareTo(DialogReflection.signature(mb));
+        });
+
+        TreeSet<Integer> used = new TreeSet<>();
+
+        for (int i = 0; i < items.size(); i++) {
+            T item = items.get(i);
+            int desired = orderExtractor.apply(item);
+            int assigned = desired;
+            while (used.contains(assigned)) {
+                assigned++;
+            }
+            used.add(assigned);
+            if (assigned != desired) {
+                items.set(i, withOrder.apply(item, assigned));
+            }
+        }
     }
 }

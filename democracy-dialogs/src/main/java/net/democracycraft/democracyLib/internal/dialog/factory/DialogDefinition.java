@@ -25,12 +25,21 @@ public record DialogDefinition(
 ) {
 
     public record BodyMethod(@NotNull String id, int order, @NotNull Method method) {
+        public @NotNull BodyMethod withOrder(int order) {
+            return new BodyMethod(this.id, order, this.method);
+        }
     }
 
     public record InputMethod(@NotNull String id, int order, @NotNull Method method) {
+        public @NotNull InputMethod withOrder(int order) {
+            return new InputMethod(this.id, order, this.method);
+        }
     }
 
     public record ButtonMethod(@NotNull String id, int order, @NotNull Method method) {
+        public @NotNull ButtonMethod withOrder(int order) {
+            return new ButtonMethod(this.id, order, this.method);
+        }
     }
 
     public record ButtonHandlerMethod(@NotNull String buttonId, int uses, @NotNull Method method) {

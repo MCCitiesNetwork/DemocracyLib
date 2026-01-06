@@ -220,4 +220,36 @@ class DialogFactoryImpTest {
         assertEquals(1, def.handlers().size());
         assertEquals("builder-btn", def.handlers().getFirst().buttonId());
     }
+
+    @Test
+    void parse_shouldShiftAbstractOrders_whenConcreteUsesSameOrder() {
+        abstract class Base {
+            @DialogBody(id = "base-body", order = 2)
+            abstract io.papermc.paper.registry.data.dialog.body.DialogBody baseBody();
+        }
+
+        @Dialog(canBeClosedWithEscape = true)
+        final class Controller extends Base {
+            @Contract(" -> new")
+            @DialogBody(id = "concrete-body", order = 2)
+            public @NotNull PlainMessageDialogBody concreteBody() {
+                return io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(Component.text("Concrete"));
+            }
+
+            @Contract(" -> new")
+            @Override
+            public @NotNull PlainMessageDialogBody baseBody() {
+                return io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(Component.text("Base"));
+            }
+        }
+
+        DialogDefinition def = DialogFactoryImp.parse(new Controller());
+
+        assertEquals(2, def.body().size());
+        assertEquals("concrete-body", def.body().get(0).id());
+        assertEquals(2, def.body().get(0).order());
+
+        assertEquals("base-body", def.body().get(1).id());
+        assertEquals(3, def.body().get(1).order());
+    }
 }
