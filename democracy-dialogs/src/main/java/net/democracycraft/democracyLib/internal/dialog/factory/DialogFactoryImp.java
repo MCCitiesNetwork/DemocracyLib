@@ -23,7 +23,6 @@ import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -36,7 +35,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static net.democracycraft.democracyLib.internal.dialog.factory.DialogReflection.invoke;
-import static net.democracycraft.democracyLib.internal.dialog.factory.DialogReflection.sig;
+import static net.democracycraft.democracyLib.internal.dialog.factory.DialogReflection.signature;
 
 /**
  * Builds Paper dialogs from annotated controller objects.
@@ -72,7 +71,7 @@ public final class DialogFactoryImp {
             DialogBody dialogBodyAnnotation = DialogReflection.findAnnotation(method, type, DialogBody.class);
             if (dialogBodyAnnotation != null) {
                 if (!io.papermc.paper.registry.data.dialog.body.DialogBody.class.isAssignableFrom(method.getReturnType())) {
-                    logAndThrow("@DialogBody can only be used on methods returning Paper DialogBody (or subclass): " + sig(method));
+                    logAndThrow("@DialogBody can only be used on methods returning Paper DialogBody (or subclass): " + signature(method));
                 }
                 method.setAccessible(true);
                 body.add(new DialogDefinition.BodyMethod(dialogBodyAnnotation.id(), dialogBodyAnnotation.order(), method));
@@ -81,7 +80,7 @@ public final class DialogFactoryImp {
             DialogInput inputAnnotation = DialogReflection.findAnnotation(method, type, DialogInput.class);
             if (inputAnnotation != null) {
                 if (!io.papermc.paper.registry.data.dialog.input.DialogInput.class.isAssignableFrom(method.getReturnType())) {
-                    logAndThrow("@DialogInput can only be used on methods returning Paper DialogInput (or subclass): " + sig(method));
+                    logAndThrow("@DialogInput can only be used on methods returning Paper DialogInput (or subclass): " + signature(method));
                 }
                 method.setAccessible(true);
                 inputs.add(new DialogDefinition.InputMethod(inputAnnotation.id(), inputAnnotation.order(), method));
@@ -90,7 +89,7 @@ public final class DialogFactoryImp {
             DialogButton dialogButtonAnnotation = DialogReflection.findAnnotation(method, type, DialogButton.class);
             if (dialogButtonAnnotation != null) {
                 if (!ActionButton.class.isAssignableFrom(method.getReturnType())) {
-                    logAndThrow("@DialogButton can only be used on methods returning ActionButton (or subclass): " + sig(method));
+                    logAndThrow("@DialogButton can only be used on methods returning ActionButton (or subclass): " + signature(method));
                 }
                 method.setAccessible(true);
                 buttons.add(new DialogDefinition.ButtonMethod(dialogButtonAnnotation.id(), dialogButtonAnnotation.order(), method));
@@ -103,7 +102,7 @@ public final class DialogFactoryImp {
 
                 Method previous = handlerMethodByButtonId.put(handlerAnnotation.buttonId(), method);
                 if (previous != null) {
-                    logAndThrow("Duplicate @DialogButtonHandler for buttonId='" + handlerAnnotation.buttonId() + "': " + sig(previous) + " and " + sig(method));
+                    logAndThrow("Duplicate @DialogButtonHandler for buttonId='" + handlerAnnotation.buttonId() + "': " + signature(previous) + " and " + signature(method));
                 }
 
                 handlers.add(new DialogDefinition.ButtonHandlerMethod(
@@ -185,13 +184,13 @@ public final class DialogFactoryImp {
                     try {
                         handler.invoke(controller, ctx);
                     } catch (IllegalAccessException | InvocationTargetException e) {
-                        LOGGER.error("Failed to execute button handler {}", sig(handler), e);
+                        LOGGER.error("Failed to execute button handler {}", signature(handler), e);
                     }
                 };
 
                 int uses = handlerMethod.uses();
                 if (uses < 0) {
-                    LOGGER.warn("Invalid uses={} for buttonId='{}' on handler {}. Falling back to uses=1.", uses, buttonMethod.id(), sig(handler));
+                    LOGGER.warn("Invalid uses={} for buttonId='{}' on handler {}. Falling back to uses=1.", uses, buttonMethod.id(), signature(handler));
                     uses = 1;
                 }
 
@@ -234,22 +233,13 @@ public final class DialogFactoryImp {
      * Returns the DialogConfig provided by the controller (if any)
      */
     private static @Nullable DialogConfig resolveDialogConfig(@NotNull Object controller) {
-        Field configField = null;
-        for (Field field : controller.getClass().getDeclaredFields()) {
-            if (!field.isAnnotationPresent(DialogConfigProvider.class)) continue;
-
-            if (configField != null) {
-                logAndThrow("Multiple @DialogConfigProvider fields found in: " + controller.getClass().getName());
-            }
-
-            if (!DialogConfig.class.isAssignableFrom(field.getType())) {
-                logAndThrow("@DialogConfigProvider field must be assignable to DialogConfig: " + controller.getClass().getName() + "#" + field.getName());
-            }
-
-            configField = field;
-        }
+        Field configField = DialogReflection.findSingleFieldWithAnnotation(controller.getClass(), DialogConfigProvider.class);
 
         if (configField == null) return null;
+
+        if (!DialogConfig.class.isAssignableFrom(configField.getType())) {
+            logAndThrow("@DialogConfigProvider field must be assignable to DialogConfig (did you forget 'extends DialogConfig' in your generic?): " + configField.getDeclaringClass().getName() + "#" + configField.getName());
+        }
 
         try {
             configField.setAccessible(true);
@@ -267,10 +257,10 @@ public final class DialogFactoryImp {
 
     private static void validateHandlerSignature(@NotNull Method m) {
         if (m.getReturnType() != void.class) {
-            logAndThrow("@DialogButtonHandler method must be void: " + sig(m));
+            logAndThrow("@DialogButtonHandler method must be void: " + signature(m));
         }
         if (m.getParameterCount() != 1 || m.getParameterTypes()[0] != DialogContext.class) {
-            logAndThrow("@DialogButtonHandler method must accept exactly one parameter of type DialogContext: " + sig(m));
+            logAndThrow("@DialogButtonHandler method must accept exactly one parameter of type DialogContext: " + signature(m));
         }
     }
 

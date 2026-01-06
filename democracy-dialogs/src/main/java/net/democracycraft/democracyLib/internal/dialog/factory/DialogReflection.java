@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.*;
 
@@ -20,9 +21,9 @@ final class DialogReflection {
         LinkedHashMap<String, Method> methods = new LinkedHashMap<>();
 
         // Class hierarchy
-        for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (Method m : c.getDeclaredMethods()) {
-                methods.putIfAbsent(methodKey(m), m);
+        for (Class<?> clazz = type; clazz != null && clazz != Object.class; clazz = clazz.getSuperclass()) {
+            for (Method method : clazz.getDeclaredMethods()) {
+                methods.putIfAbsent(methodKey(method), method);
             }
         }
 
@@ -66,16 +67,16 @@ final class DialogReflection {
 
             for (Class<?> clazz = concreteType; clazz != null && clazz != Object.class; clazz = clazz.getSuperclass()) {
                 // interfaces
-                A ann = findAnnotationOnInterfaces(clazz.getInterfaces(), name, params, annType);
-                if (ann != null) return ann;
+                A annotationOnInterfaces = findAnnotationOnInterfaces(clazz.getInterfaces(), name, params, annType);
+                if (annotationOnInterfaces != null) return annotationOnInterfaces;
 
                 // superclass declared method
-                Class<?> sup = clazz.getSuperclass();
-                if (sup != null && sup != Object.class) {
+                Class<?> superclass = clazz.getSuperclass();
+                if (superclass != null && superclass != Object.class) {
                     try {
-                        Method m = sup.getDeclaredMethod(name, params);
-                        A a = m.getAnnotation(annType);
-                        if (a != null) return a;
+                        Method declaredMethod = superclass.getDeclaredMethod(name, params);
+                        A methodAnnotation = declaredMethod.getAnnotation(annType);
+                        if (methodAnnotation != null) return methodAnnotation;
                     } catch (NoSuchMethodException ignored) {
                     }
                 }
@@ -102,20 +103,35 @@ final class DialogReflection {
         return null;
     }
 
-    private static String methodKey(Method m) {
+    private static String methodKey(Method method) {
         StringBuilder stringBuilder = new StringBuilder();
-        stringBuilder.append(m.getName()).append('(');
-        Class<?>[] p = m.getParameterTypes();
-        for (int i = 0; i < p.length; i++) {
+        stringBuilder.append(method.getName()).append('(');
+        Class<?>[] parameterTypes = method.getParameterTypes();
+        for (int i = 0; i < parameterTypes.length; i++) {
             if (i > 0) stringBuilder.append(',');
-            stringBuilder.append(p[i].getName());
+            stringBuilder.append(parameterTypes[i].getName());
         }
         stringBuilder.append(')');
         return stringBuilder.toString();
     }
 
-    static String sig(Method method) {
+    static @NotNull String signature(@NotNull Method method) {
         return method.getDeclaringClass().getName() + "#" + method.getName() + "()";
+    }
+
+    static @Nullable Field findSingleFieldWithAnnotation(Class<?> type, Class<? extends Annotation> annotationClass) {
+        Field found = null;
+        for (Class<?> clazz = type; clazz != null && clazz != Object.class; clazz = clazz.getSuperclass()) {
+            for (Field field : clazz.getDeclaredFields()) {
+                if (field.isAnnotationPresent(annotationClass)) {
+                    if (found != null) {
+                        throw new IllegalArgumentException("Multiple fields annotated with @" + annotationClass.getSimpleName() + " found in hierarchy of " + type.getName());
+                    }
+                    found = field;
+                }
+            }
+        }
+        return found;
     }
 
     static <T> T invoke(Object controller, @NotNull Method method, Class<T> expectedType) {
@@ -127,14 +143,14 @@ final class DialogReflection {
             Object[] args = defaultArgs(method.getParameterTypes());
             Object value = method.invoke(controller, args);
             if (value == null) {
-                throw new IllegalStateException("Method returned null: " + sig(method));
+                throw new IllegalStateException("Method returned null: " + signature(method));
             }
             if (!expectedType.isInstance(value)) {
-                throw new IllegalStateException("Method returned invalid type. Expected " + expectedType.getName() + " but got " + value.getClass().getName() + ": " + sig(method));
+                throw new IllegalStateException("Method returned invalid type. Expected " + expectedType.getName() + " but got " + value.getClass().getName() + ": " + signature(method));
             }
             return expectedType.cast(value);
         } catch (IllegalAccessException | java.lang.reflect.InvocationTargetException e) {
-            String msg = "Failed to invoke " + sig(method);
+            String msg = "Failed to invoke " + signature(method);
             LOGGER.error(msg, e);
             throw new IllegalStateException(msg, e);
         }
