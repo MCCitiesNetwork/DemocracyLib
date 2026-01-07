@@ -165,8 +165,9 @@ final class DialogReflection {
             }
             Object[] args = defaultArgs(method.getParameterTypes());
             Object value = method.invoke(controller, args);
+            // Allow null for conditional rendering
             if (value == null) {
-                throw new IllegalStateException("Method returned null: " + signature(method));
+                return null;
             }
             if (!expectedType.isInstance(value)) {
                 throw new IllegalStateException("Method returned invalid type. Expected " + expectedType.getName() + " but got " + value.getClass().getName() + ": " + signature(method));

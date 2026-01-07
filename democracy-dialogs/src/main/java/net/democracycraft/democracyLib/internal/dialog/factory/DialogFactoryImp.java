@@ -26,7 +26,10 @@ import org.slf4j.LoggerFactory;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -72,8 +75,8 @@ public final class DialogFactoryImp {
         for (Method method : DialogReflection.collectAllMethods(type).values()) {
             DialogBody dialogBodyAnnotation = DialogReflection.findAnnotation(method, type, DialogBody.class);
             if (dialogBodyAnnotation != null) {
-                if (!io.papermc.paper.registry.data.dialog.body.DialogBody.class.isAssignableFrom(method.getReturnType())) {
-                    logAndThrow("@DialogBody can only be used on methods returning Paper DialogBody (or subclass): " + signature(method));
+                if (!isValidReturnType(method, io.papermc.paper.registry.data.dialog.body.DialogBody.class)) {
+                    logAndThrow("@DialogBody method must return DialogBody (or subclass) or List<DialogBody>: " + signature(method));
                 }
                 method.setAccessible(true);
                 body.add(new DialogDefinition.BodyMethod(dialogBodyAnnotation.id(), dialogBodyAnnotation.order(), method));
@@ -81,8 +84,8 @@ public final class DialogFactoryImp {
 
             DialogInput inputAnnotation = DialogReflection.findAnnotation(method, type, DialogInput.class);
             if (inputAnnotation != null) {
-                if (!io.papermc.paper.registry.data.dialog.input.DialogInput.class.isAssignableFrom(method.getReturnType())) {
-                    logAndThrow("@DialogInput can only be used on methods returning Paper DialogInput (or subclass): " + signature(method));
+                if (!isValidReturnType(method, io.papermc.paper.registry.data.dialog.input.DialogInput.class)) {
+                    logAndThrow("@DialogInput method must return DialogInput (or subclass) or List<DialogInput>: " + signature(method));
                 }
                 method.setAccessible(true);
                 inputs.add(new DialogDefinition.InputMethod(inputAnnotation.id(), inputAnnotation.order(), method));
@@ -90,9 +93,16 @@ public final class DialogFactoryImp {
 
             DialogButton dialogButtonAnnotation = DialogReflection.findAnnotation(method, type, DialogButton.class);
             if (dialogButtonAnnotation != null) {
-                if (!ActionButton.Builder.class.isAssignableFrom(method.getReturnType())) {
-                    logAndThrow("@DialogButton can only be used on methods returning ActionButton.Builder: " + signature(method));
+                // Allowed: ActionButton.Builder, ActionButton, List<ActionButton>
+                // Disallowed: List<ActionButton.Builder> because button lists should already come with their callbacks
+                boolean isBuilder = ActionButton.Builder.class.isAssignableFrom(method.getReturnType());
+                boolean isButton = ActionButton.class.isAssignableFrom(method.getReturnType());
+                boolean isButtonList = isGenericListType(method, ActionButton.class);
+
+                if (!isBuilder && !isButton && !isButtonList) {
+                    logAndThrow("@DialogButton method must return ActionButton.Builder, ActionButton, or List<ActionButton> (List<Builder> is not supported): " + signature(method));
                 }
+
                 method.setAccessible(true);
                 buttons.add(new DialogDefinition.ButtonMethod(dialogButtonAnnotation.id(), dialogButtonAnnotation.order(), method));
             }
@@ -155,7 +165,23 @@ public final class DialogFactoryImp {
         if (!definition.body().isEmpty()) {
             List<io.papermc.paper.registry.data.dialog.body.DialogBody> builtBody = new ArrayList<>();
             for (DialogDefinition.BodyMethod bm : definition.body()) {
-                builtBody.add(invoke(controller, bm.method(), io.papermc.paper.registry.data.dialog.body.DialogBody.class));
+                Object result = invoke(controller, bm.method(), Object.class);
+                switch (result) {
+                    case null -> {
+                        // Conditional rendering (no rendering if null)
+                    }
+                    case io.papermc.paper.registry.data.dialog.body.DialogBody b -> builtBody.add(b);
+                    case Collection<?> list -> {
+                        for (Object item : list) {
+                            if (item instanceof io.papermc.paper.registry.data.dialog.body.DialogBody b) {
+                                builtBody.add(b);
+                            }
+                        }
+                    }
+                    default -> {
+                    }
+                }
+
             }
             base.body(builtBody);
         }
@@ -164,7 +190,18 @@ public final class DialogFactoryImp {
         if (!definition.inputs().isEmpty()) {
             List<io.papermc.paper.registry.data.dialog.input.DialogInput> builtInputs = new ArrayList<>();
             for (DialogDefinition.InputMethod im : definition.inputs()) {
-                builtInputs.add(invoke(controller, im.method(), io.papermc.paper.registry.data.dialog.input.DialogInput.class));
+                Object result = invoke(controller, im.method(), Object.class);
+                if (result == null) continue; // Conditional rendering
+
+                if (result instanceof io.papermc.paper.registry.data.dialog.input.DialogInput i) {
+                    builtInputs.add(i);
+                } else if (result instanceof Collection<?> list) {
+                    for (Object item : list) {
+                        if (item instanceof io.papermc.paper.registry.data.dialog.input.DialogInput i) {
+                            builtInputs.add(i);
+                        }
+                    }
+                }
             }
             base.inputs(builtInputs);
         }
@@ -182,45 +219,53 @@ public final class DialogFactoryImp {
         for (DialogDefinition.ButtonMethod buttonMethod : definition.buttons()) {
             DialogDefinition.ButtonHandlerMethod handlerMethod = handlerByButtonId.get(buttonMethod.id());
 
-            // Get the raw object (must be ActionButton.Builder)
             Object result = invoke(controller, buttonMethod.method(), Object.class);
+            if (result == null) continue; // Conditional rendering
 
-            ActionButton.Builder builder;
-
-            if (result instanceof ActionButton.Builder b) {
-                builder = b;
-            } else {
-                throw new IllegalStateException("Method " + signature(buttonMethod.method()) + " returned unexpected type: " + result.getClass().getName());
-            }
-
-            if (handlerMethod != null) {
-                Method handler = handlerMethod.method();
-
-                DialogActionCallback callback = (response, audience) -> {
-                    DialogContext ctx = new DialogContextImp(audience, response);
-                    try {
-                        handler.invoke(controller, ctx);
-                    } catch (IllegalAccessException | InvocationTargetException e) {
-                        LOGGER.error("Failed to execute button handler {}", signature(handler), e);
-                    }
-                };
-
-                int uses = handlerMethod.uses();
-                if (uses < 0) {
-                    LOGGER.warn("Invalid uses={} for buttonId='{}' on handler {}. Falling back to uses=1.", uses, buttonMethod.id(), signature(handler));
-                    uses = 1;
+            if (result instanceof Collection<?> list) {
+                if (handlerMethod != null) {
+                    LOGGER.warn("Handler defined for buttonId='{}' but method returned a List. Handlers are only supported for single ActionButton.Builder. The handler will be ignored.", buttonMethod.id());
                 }
+                for (Object item : list) {
+                    if (item instanceof ActionButton b) {
+                        builtButtons.add(b);
+                    } else {
+                         LOGGER.warn("Method {} returned a collection containing non-ActionButton: {}", signature(buttonMethod.method()), item != null ? item.getClass().getName() : "null");
+                    }
+                }
+            } else if (result instanceof ActionButton button) {
+                if (handlerMethod != null) {
+                    LOGGER.warn("Handler defined for buttonId='{}' but method returned a pre-built ActionButton. Handlers are only supported for ActionButton.Builder. The handler will be ignored.", buttonMethod.id());
+                }
+                builtButtons.add(button);
+            } else if (result instanceof ActionButton.Builder builder) {
+                if (handlerMethod != null) {
+                    Method handler = handlerMethod.method();
+                    DialogActionCallback callback = (response, audience) -> {
+                        DialogContext ctx = new DialogContextImp(audience, response);
+                        try {
+                            handler.invoke(controller, ctx);
+                        } catch (IllegalAccessException | InvocationTargetException e) {
+                            LOGGER.error("Failed to execute button handler {}", signature(handler), e);
+                        }
+                    };
 
-                DialogAction action = DialogInstancesProvider.instance().register(
-                        callback,
-                        ClickCallback.Options.builder().uses(uses).build()
-                );
+                    int uses = handlerMethod.uses();
+                    if (uses < 0) {
+                        LOGGER.warn("Invalid uses={} for buttonId='{}' on handler {}. Falling back to uses=1.", uses, buttonMethod.id(), signature(handler));
+                        uses = 1;
+                    }
 
-                // Inject action into builder
-                builder.action(action);
+                    DialogAction action = DialogInstancesProvider.instance().register(
+                            callback,
+                            ClickCallback.Options.builder().uses(uses).build()
+                    );
+                    builder.action(action);
+                }
+                builtButtons.add(builder.build());
+            } else {
+               throw new IllegalStateException("Method " + signature(buttonMethod.method()) + " returned unexpected type: " + result.getClass().getName());
             }
-
-            builtButtons.add(builder.build());
         }
 
         return InlinedRegistryBuilderProvider.instance().createDialog(factory -> {
@@ -348,5 +393,26 @@ public final class DialogFactoryImp {
                 items.set(i, withOrder.apply(item, assigned));
             }
         }
+    }
+
+    private static boolean isValidReturnType(Method method, Class<?> targetType) {
+        if (targetType.isAssignableFrom(method.getReturnType())) {
+            return true;
+        }
+        return isGenericListType(method, targetType);
+    }
+
+    private static boolean isGenericListType(Method method, Class<?> componentType) {
+        if (!List.class.isAssignableFrom(method.getReturnType())) {
+            return false;
+        }
+        Type genericReturnType = method.getGenericReturnType();
+        if (genericReturnType instanceof ParameterizedType pt) {
+            Type[] args = pt.getActualTypeArguments();
+            if (args.length == 1 && args[0] instanceof Class<?> genericClass) {
+                return componentType.isAssignableFrom(genericClass);
+            }
+        }
+        return false;
     }
 }

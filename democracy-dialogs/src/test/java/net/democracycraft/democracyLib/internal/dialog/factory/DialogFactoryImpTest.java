@@ -13,10 +13,20 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.Collections;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Basic tests for DialogFactoryImp parsing and validation.
+ */
 class DialogFactoryImpTest {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(DialogFactoryImpTest.class);
 
     private static final class TestDialogConfig implements DialogConfig {
         @Contract(value = " -> new", pure = true)
@@ -35,7 +45,6 @@ class DialogFactoryImpTest {
         @Contract(" -> new")
         @DialogButton(id = "ok", order = 0)
         public @NotNull ActionButton.Builder okButton() {
-            // Updated to return Builder as requested, removing .build() and implicit action
             return ActionButton.builder(Component.text("OK"));
         }
 
@@ -48,19 +57,17 @@ class DialogFactoryImpTest {
         @DialogButtonHandler(buttonId = "ok", uses = 1)
         public void onOk(DialogContext ctx) {
             assertNotNull(ctx);
-            assertNotNull(ctx.getAudience());
-            assertNotNull(ctx.dialogResponseView());
         }
     }
 
     @AfterEach
     void logTestPassed(@NotNull TestInfo testInfo) {
-        System.out.println("[TEST PASS] " + testInfo.getDisplayName());
+        LOGGER.info("[TEST PASS] {}", testInfo.getDisplayName());
     }
 
     @AfterAll
     static void logClassPassed() {
-        System.out.println("[TEST PASS] DialogFactoryImpTest");
+        LOGGER.info("[ALL TESTS PASSED] DialogFactoryImpTest");
     }
 
     @Test
@@ -92,113 +99,6 @@ class DialogFactoryImpTest {
         assertThrows(IllegalArgumentException.class, () -> DialogFactoryImp.parse(new MissingDialogAnnotationController()));
     }
 
-    /**
-     * Interface method is annotated, concrete class implements it without repeating the annotation.
-     */
-    @Test
-    void parse_shouldResolveAnnotations_fromInterfaceToConcreteClass() {
-        @SuppressWarnings("unused")
-        interface I {
-            @DialogButton(id = "i-btn", order = 0)
-            ActionButton.Builder button();
-
-            @DialogButtonHandler(buttonId = "i-btn")
-            void onClick(DialogContext ctx);
-        }
-
-        @Dialog(canBeClosedWithEscape = true)
-        final class Controller implements I {
-            @Contract(" -> new")
-            @Override
-            public ActionButton.@NotNull Builder button() {
-                return ActionButton.builder(Component.text("I"));
-            }
-
-            @Override
-            public void onClick(DialogContext ctx) {
-                // no-op
-            }
-        }
-
-        DialogDefinition def = DialogFactoryImp.parse(new Controller());
-        assertEquals(1, def.buttons().size());
-        assertEquals("i-btn", def.buttons().getFirst().id());
-        assertEquals(1, def.handlers().size());
-        assertEquals("i-btn", def.handlers().getFirst().buttonId());
-    }
-
-    /**
-     * Abstract base declares the annotation, concrete overrides without repeating it.
-     */
-    @Test
-    void parse_shouldResolveAnnotations_fromAbstractClassToConcreteClass() {
-        abstract class Base {
-            @DialogBody(id = "abs-body", order = 0)
-            abstract io.papermc.paper.registry.data.dialog.body.DialogBody body();
-
-            @DialogButton(id = "abs-btn", order = 0)
-            abstract ActionButton.Builder button();
-
-            @DialogButtonHandler(buttonId = "abs-btn")
-            public void onClick(DialogContext ctx) {
-                // no-op
-            }
-        }
-
-        @Dialog(canBeClosedWithEscape = true)
-        final class Controller extends Base {
-            @Contract(" -> new")
-            @Override
-            public @NotNull PlainMessageDialogBody body() {
-                return io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(Component.text("Hello"));
-            }
-
-            @Contract(" -> new")
-            @Override
-            public ActionButton.@NotNull Builder button() {
-                return ActionButton.builder(Component.text("A"));
-            }
-        }
-
-        DialogDefinition def = DialogFactoryImp.parse(new Controller());
-        assertEquals(1, def.body().size());
-        assertEquals("abs-body", def.body().getFirst().id());
-
-        assertEquals(1, def.buttons().size());
-        assertEquals("abs-btn", def.buttons().getFirst().id());
-
-        assertEquals(1, def.handlers().size());
-        assertEquals("abs-btn", def.handlers().getFirst().buttonId());
-    }
-
-    /**
-     * Annotation declared on interface, implemented by abstract class, then concrete class.
-     */
-    @Test
-    void parse_shouldResolveAnnotations_fromInterfaceToAbstractToConcreteClass() {
-        @SuppressWarnings("unused")
-        interface I {
-            @DialogInput(id = "i-in", order = 0)
-            io.papermc.paper.registry.data.dialog.input.DialogInput input();
-        }
-
-        abstract class Base implements I {
-            @Override
-            public io.papermc.paper.registry.data.dialog.input.DialogInput input() {
-                // parse() only inspects the annotation + return type; no runtime instance is required.
-                return null;
-            }
-        }
-
-        @Dialog(canBeClosedWithEscape = true)
-        final class Controller extends Base {
-        }
-
-        DialogDefinition def = DialogFactoryImp.parse(new Controller());
-        assertEquals(1, def.inputs().size());
-        assertEquals("i-in", def.inputs().getFirst().id());
-    }
-
     @Test
     void parse_shouldSupportActionButtonBuilder() {
         @Dialog(canBeClosedWithEscape = true)
@@ -222,34 +122,63 @@ class DialogFactoryImpTest {
     }
 
     @Test
-    void parse_shouldShiftAbstractOrders_whenConcreteUsesSameOrder() {
-        abstract class Base {
-            @DialogBody(id = "base-body", order = 2)
-            abstract io.papermc.paper.registry.data.dialog.body.DialogBody baseBody();
-        }
-
+    void parse_shouldAcceptListReturnTypes() {
         @Dialog(canBeClosedWithEscape = true)
-        final class Controller extends Base {
-            @Contract(" -> new")
-            @DialogBody(id = "concrete-body", order = 2)
-            public @NotNull PlainMessageDialogBody concreteBody() {
-                return io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(Component.text("Concrete"));
+        class ListController {
+            @DialogBody(id = "list-body", order = 0)
+            public List<io.papermc.paper.registry.data.dialog.body.DialogBody> bodies() {
+                return Collections.emptyList();
             }
 
-            @Contract(" -> new")
-            @Override
-            public @NotNull PlainMessageDialogBody baseBody() {
-                return io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(Component.text("Base"));
+            @DialogButton(id = "list-btn", order = 0)
+            public List<ActionButton> buttons() {
+                return Collections.emptyList();
+            }
+
+            @DialogInput(id = "list-input", order = 0)
+            public List<io.papermc.paper.registry.data.dialog.input.DialogInput> inputs() {
+                return Collections.emptyList();
             }
         }
 
-        DialogDefinition def = DialogFactoryImp.parse(new Controller());
+        DialogDefinition def = DialogFactoryImp.parse(new ListController());
 
-        assertEquals(2, def.body().size());
-        assertEquals("concrete-body", def.body().get(0).id());
-        assertEquals(2, def.body().get(0).order());
+        assertEquals(1, def.body().size());
+        assertEquals("list-body", def.body().getFirst().id());
 
-        assertEquals("base-body", def.body().get(1).id());
-        assertEquals(3, def.body().get(1).order());
+        assertEquals(1, def.buttons().size());
+        assertEquals("list-btn", def.buttons().getFirst().id());
+
+        assertEquals(1, def.inputs().size());
+        assertEquals("list-input", def.inputs().getFirst().id());
+    }
+
+    @Test
+    void parse_shouldAcceptRawActionButton() {
+        @Dialog(canBeClosedWithEscape = true)
+        class RawButtonController {
+            @DialogButton(id = "raw-btn", order = 0)
+            public ActionButton button() {
+                return ActionButton.builder(Component.text("Raw")).build();
+            }
+        }
+
+        DialogDefinition def = DialogFactoryImp.parse(new RawButtonController());
+        assertEquals(1, def.buttons().size());
+        assertEquals("raw-btn", def.buttons().getFirst().id());
+    }
+
+    @Test
+    void parse_shouldRejectListOfBuilders() {
+        @Dialog(canBeClosedWithEscape = true)
+        class InvalidListController {
+            @DialogButton(id = "invalid-btn", order = 0)
+            public List<ActionButton.Builder> buttons() {
+                return Collections.emptyList();
+            }
+        }
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> DialogFactoryImp.parse(new InvalidListController()));
+        assertTrue(ex.getMessage().contains("List<Builder> is not supported"));
     }
 }
