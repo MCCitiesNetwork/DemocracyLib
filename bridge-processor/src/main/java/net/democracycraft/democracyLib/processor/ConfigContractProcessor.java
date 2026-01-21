@@ -1,4 +1,6 @@
 package net.democracycraft.democracyLib.processor;
+
+import net.democracycraft.democracyLib.api.config.ConfigFormat;
 import net.democracycraft.democracyLib.api.config.Configurable;
 import net.democracycraft.democracyLib.api.config.ConfigValue;
 import javax.annotation.processing.AbstractProcessor;
@@ -93,10 +95,10 @@ public class ConfigContractProcessor extends AbstractProcessor {
         }
 
 
-        generateClass(targetPackage, configName, configFields);
+        generateClass(targetPackage, configName, configFields, annotation);
     }
 
-    private void generateClass(String packageName, String className, List<VariableElement> fields) throws IOException {
+    private void generateClass(String packageName, String className, List<VariableElement> fields, Configurable annotation) throws IOException {
         JavaFileObject builderFile = processingEnv.getFiler().createSourceFile(packageName + "." + className);
         try (PrintWriter printWriter = new PrintWriter(builderFile.openWriter())) {
 
@@ -125,6 +127,11 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println();
             printWriter.println("    private File file;");
             printWriter.println("    private YamlConfiguration yaml;");
+            printWriter.println();
+
+            // Default Filename Constant
+            String extension = annotation.format() == ConfigFormat.JSON ? ".json" : ".yml";
+            printWriter.println("    public static final String DEFAULT_FILENAME = \"" + annotation.name() + extension + "\";");
             printWriter.println();
 
             // Fields

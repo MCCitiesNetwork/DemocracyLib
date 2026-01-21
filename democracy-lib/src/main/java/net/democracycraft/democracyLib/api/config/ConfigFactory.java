@@ -1,92 +1,117 @@
 package net.democracycraft.democracyLib.api.config;
 
-import org.bukkit.plugin.Plugin;
 import org.jspecify.annotations.NonNull;
 
 import java.io.File;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 public class ConfigFactory {
 
     private static final Map<Class<?>, MethodHandle> CONSTRUCTOR_CACHE = new ConcurrentHashMap<>();
 
     /**
-     * Creates and loads a configuration object based on the schema class annotated with @Configurable.
+     * Loads or creates a generated configuration object type-safely.
+     * Use this if you have a specific File object (e.g. outside the plugin data folder or subfolders).
      *
-     * @param plugin The plugin instance owner of the file.
-     * @param configurableClass The class annotated with @Configurable defining the schema.
+     * @param file The file to load/create.
+     * @param generatedConfigClass The generated configuration class.
+     * @param <T> The type of the generated config.
      * @return The generated configuration object.
      */
-    public static @NonNull Object create(Plugin plugin, Class<?> configurableClass) {
-        return createInternal(plugin, configurableClass, null, false).join();
+    public static <T extends GeneratedConfig> @NonNull T loadOrCreate(File file, Class<T> generatedConfigClass) {
+        return createInternalFile(file, generatedConfigClass, false).join();
     }
 
     /**
-     * Creates and loads a configuration object with a specific filename.
+     * Loads or creates a generated configuration object type-safely asynchronously.
+     * Use this if you have a specific File object (e.g. outside the plugin data folder or subfolders).
      *
-     * @param plugin The plugin instance owner of the file.
-     * @param configurableClass The class annotated with @Configurable defining the schema.
-     * @param fileName The specific filename to use (overrides annotation).
-     * @return The generated configuration object.
-     */
-    public static @NonNull Object create(Plugin plugin, Class<?> configurableClass, String fileName) {
-        return createInternal(plugin, configurableClass, fileName, false).join();
-    }
-
-    /**
-     * Creates and loads a configuration object asynchronously.
-     *
-     * @param plugin The plugin instance owner of the file.
-     * @param configurableClass The class annotated with @Configurable defining the schema.
+     * @param file The file to load/create.
+     * @param generatedConfigClass The generated configuration class.
+     * @param <T> The type of the generated config.
      * @return A future completing with the generated configuration object.
      */
-    public static CompletableFuture<Object> createAsync(Plugin plugin, Class<?> configurableClass) {
-        return createInternal(plugin, configurableClass, null, true);
+    public static <T extends GeneratedConfig> CompletableFuture<T> loadOrCreateAsync(File file, Class<T> generatedConfigClass) {
+        return createInternalFile(file, generatedConfigClass, true);
     }
 
     /**
-     * Creates and loads a configuration object asynchronously with a specific filename.
+     * Loads all configuration files from a directory, interpreting them as the given generated config class.
+     * Returns a map of filename (without path) to the loaded config instance.
+     * This is useful for data-driven systems where users define multiple objects in separate files.
+     * Non-matching files (extension) or invalid files are skipped or handled gracefully.
      *
-     * @param plugin The plugin instance owner of the file.
-     * @param configurableClass The class annotated with @Configurable defining the schema.
-     * @param fileName The specific filename to use (overrides annotation).
-     * @return A future completing with the generated configuration object.
+     * @param directory The directory to scan.
+     * @param generatedConfigClass The generated configuration class.
+     * @param <T> The type of the generated config.
+     * @return Map of fileName -> ConfigInstance
      */
-    public static CompletableFuture<Object> createAsync(Plugin plugin, Class<?> configurableClass, String fileName) {
-        return createInternal(plugin, configurableClass, fileName, true);
+    public static <T extends GeneratedConfig> @NonNull Map<String, T> loadAllFromDirectory(File directory, Class<T> generatedConfigClass) {
+        return loadAllFromDirectoryAsync(directory, generatedConfigClass).join();
     }
 
-    private static CompletableFuture<Object> createInternal(Plugin plugin, @NonNull Class<?> configurableClass, String fileNameOverride, boolean async) {
-        Configurable annotation = configurableClass.getAnnotation(Configurable.class);
-        if (annotation == null) {
-             throw new IllegalArgumentException("Class " + configurableClass.getName() + " is not annotated with @Configurable.");
+    /**
+     * Loads all configuration files from a directory asynchronously.
+     *
+     * @param directory The directory to scan.
+     * @param generatedConfigClass The generated configuration class.
+     * @param <T> The type of the generated config.
+     * @return Future of Map of fileName -> ConfigInstance
+     */
+    public static <T extends GeneratedConfig> CompletableFuture<Map<String, T>> loadAllFromDirectoryAsync(File directory, Class<T> generatedConfigClass) {
+        if (!directory.exists() || !directory.isDirectory()) {
+            return CompletableFuture.completedFuture(Collections.emptyMap());
         }
-        String fileName = fileNameOverride != null ? fileNameOverride : annotation.name() + ".yml";
+
+        File[] files = directory.listFiles((dir, name) -> name.endsWith(".yml") || name.endsWith(".json"));
+        if (files == null) {
+            return CompletableFuture.completedFuture(Collections.emptyMap());
+        }
+
+        List<CompletableFuture<Map.Entry<String, T>>> futures = Arrays.stream(files)
+                .map(file -> loadOrCreateAsync(file, generatedConfigClass)
+                        .thenApply(config -> Map.entry(file.getName(), config))
+                        .exceptionally(throwable -> null)) // Skip failed loads
+                .toList();
+
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .thenApply(unused -> {
+                    Map<String, T> result = new ConcurrentHashMap<>();
+                    for (CompletableFuture<Map.Entry<String, T>> entryCompletableFuture : futures) {
+                        Map.Entry<String, T> entry = entryCompletableFuture.join();
+                        if (entry != null) {
+                            result.put(entry.getKey(), entry.getValue());
+                        }
+                    }
+                    return result;
+                });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends GeneratedConfig> CompletableFuture<T> createInternalFile(File configFile, @NonNull Class<T> generatedClass, boolean async) {
+        if (configFile.getParentFile() != null && !configFile.getParentFile().exists()) {
+            configFile.getParentFile().mkdirs();
+        }
 
         try {
-            MethodHandle constructor = CONSTRUCTOR_CACHE.computeIfAbsent(configurableClass, clazz -> {
-                String generatedClassName = getGeneratedClassName(clazz);
+            MethodHandle constructor = CONSTRUCTOR_CACHE.computeIfAbsent(generatedClass, clazz -> {
                 try {
-                    Class<?> generatedClass = Class.forName(generatedClassName);
-
-                    if (!GeneratedConfig.class.isAssignableFrom(generatedClass)) {
-                        throw new RuntimeException("Generated class " + generatedClassName + " does not implement GeneratedConfig interface.");
-                    }
-                    // Look for public no-arg constructor
-                    return MethodHandles.publicLookup().findConstructor(generatedClass, MethodType.methodType(void.class));
+                     return MethodHandles.publicLookup().findConstructor(clazz, MethodType.methodType(void.class));
                 } catch (Exception e) {
-                    throw new RuntimeException("Failed to resolve generated config for " + clazz.getName(), e);
+                    throw new RuntimeException("Failed to resolve constructor for " + clazz.getName(), e);
                 }
             });
 
-            File configFile = new File(plugin.getDataFolder(), fileName);
-
-            GeneratedConfig configInstance = (GeneratedConfig) constructor.invoke();
+            T configInstance = (T) constructor.invoke();
             configInstance.init(configFile);
 
             if (async) {
@@ -97,30 +122,9 @@ public class ConfigFactory {
             }
 
         } catch (Throwable e) {
-             CompletableFuture<Object> failed = new CompletableFuture<>();
-             failed.completeExceptionally(new RuntimeException("Failed to initialize configuration for " + configurableClass.getName(), e));
+             CompletableFuture<T> failed = new CompletableFuture<>();
+             failed.completeExceptionally(new RuntimeException("Failed to initialize configuration for " + generatedClass.getName(), e));
              return failed;
         }
     }
-
-    private static @NonNull String getGeneratedClassName(@NonNull Class<?> configurableClass) {
-        // Validation already performed in create, but kept for method contract
-        if (!configurableClass.isAnnotationPresent(Configurable.class)) {
-            throw new IllegalArgumentException("Class " + configurableClass.getName() + " is not annotated with @Configurable.");
-        }
-
-        return getClassName(configurableClass);
-    }
-
-    static @NonNull String getClassName(@NonNull Class<?> configurableClass) {
-        Configurable annotation = configurableClass.getAnnotation(Configurable.class);
-        String configName = annotation.name();
-        String targetPackage = annotation.targetPackage();
-
-        if (targetPackage.isEmpty()) {
-            targetPackage = configurableClass.getPackageName();
-        }
-        return targetPackage + "." + configName;
-    }
 }
-
