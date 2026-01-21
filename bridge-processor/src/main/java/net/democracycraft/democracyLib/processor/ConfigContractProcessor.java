@@ -29,18 +29,43 @@ import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.ExecutableElement;
 
-@SupportedAnnotationTypes("net.democracycraft.democracyLib.api.config.Configurable")
+@SupportedAnnotationTypes("*")
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class ConfigContractProcessor extends AbstractProcessor {
 
-    private final Map<String, List<VariableElement>> fieldCache = new HashMap<>();
-
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        TypeElement annotationType = processingEnv.getElementUtils().getTypeElement(Configurable.class.getName());
-        if (annotationType == null) {
+        for (TypeElement annotation : annotations) {
+            if (isConfigurableAnnotation(annotation)) {
+                processAnnotation(annotation, roundEnv);
+            }
+        }
+        return false;
+    }
+
+    private boolean isConfigurableAnnotation(TypeElement annotation) {
+        if (!annotation.getSimpleName().contentEquals("Configurable")) {
             return false;
         }
+        boolean hasName = false;
+        boolean hasTargetPackage = false;
+        boolean hasFormat = false;
+
+        for (Element enclosed : annotation.getEnclosedElements()) {
+            if (enclosed.getKind() == ElementKind.METHOD) {
+                String name = enclosed.getSimpleName().toString();
+                if (name.equals("name")) hasName = true;
+                else if (name.equals("targetPackage")) hasTargetPackage = true;
+                else if (name.equals("format")) hasFormat = true;
+            }
+        }
+        return hasName && hasTargetPackage && hasFormat;
+    }
+
+    private void processAnnotation(TypeElement annotationType, RoundEnvironment roundEnv) {
+        String packageName = processingEnv.getElementUtils().getPackageOf(annotationType).getQualifiedName().toString();
+        String configValueName = packageName + ".ConfigValue";
+        String generatedConfigName = packageName + ".GeneratedConfig";
 
         for (Element element : roundEnv.getElementsAnnotatedWith(annotationType)) {
             if (element.getKind() != ElementKind.CLASS) {
@@ -48,35 +73,28 @@ public class ConfigContractProcessor extends AbstractProcessor {
                 continue;
             }
             try {
-                processConfigClass((TypeElement) element);
+                processConfigClass((TypeElement) element, annotationType.getQualifiedName().toString(), configValueName, generatedConfigName);
             } catch (Exception e) {
                 processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Failed to generate config for " + element.getSimpleName() + ": " + e.getMessage());
             }
         }
-        return true;
     }
 
-    private void processConfigClass(TypeElement classElement) throws IOException {
-        AnnotationMirror annotationMirror = getAnnotationMirror(classElement, Configurable.class.getName());
+    private void processConfigClass(TypeElement classElement, String configurableName, String configValueName, String generatedConfigName) throws IOException {
+        AnnotationMirror annotationMirror = getAnnotationMirror(classElement, configurableName);
         if (annotationMirror == null) {
             return;
         }
 
         String configName = getAnnotationValue(annotationMirror, "name", String.class);
         String targetPackage = getAnnotationValue(annotationMirror, "targetPackage", String.class);
-        // Default values handling if needed, though usually mirrors return defaults if available?
-        // No, AnnotationMirror.getElementValues only returns explicitly set values usually, need to check defaults.
-        // Actually, for robustness, I will default them manually if null/empty.
 
-        if (configName == null) configName = classElement.getSimpleName() + "Config"; // Fallback, though 'name' is mandatory?
+        if (configName == null) configName = classElement.getSimpleName() + "Config";
         if (targetPackage == null) targetPackage = "";
 
         // Format handling
-        Object formatObj = getAnnotationValue(annotationMirror, "format", Object.class); // It returns a VariableElement or generic wrapper for Enum
+        Object formatObj = getAnnotationValue(annotationMirror, "format", Object.class);
         String formatName = formatObj != null ? formatObj.toString() : "YAML";
-        // formatObj.toString() for enum value usually keeps the name, e.g. "YAML" or full path?
-        // For enum constants in values, it's usually `VariableElement`. toString() gives "YAML".
-        // Let's be safer:
         String extension = "YAML".equalsIgnoreCase(getEnumName(formatObj)) || "JSON".equalsIgnoreCase(getEnumName(formatObj)) ?
                 (getEnumName(formatObj).equalsIgnoreCase("JSON") ? ".json" : ".yml") : ".yml";
 
@@ -91,21 +109,15 @@ public class ConfigContractProcessor extends AbstractProcessor {
 
         while (currentElement != null) {
             String qualifiedName = currentElement.getQualifiedName().toString();
-            List<VariableElement> declaredFields;
+            List<VariableElement> declaredFields = new ArrayList<>();
 
-            if (fieldCache.containsKey(qualifiedName)) {
-                declaredFields = fieldCache.get(qualifiedName);
-            } else {
-                declaredFields = new ArrayList<>();
-                for (Element enclosed : currentElement.getEnclosedElements()) {
-                    if (enclosed.getKind() == ElementKind.FIELD) {
-                        AnnotationMirror fieldAnn = getAnnotationMirror(enclosed, ConfigValue.class.getName());
-                        if (fieldAnn != null) {
-                            declaredFields.add((VariableElement) enclosed);
-                        }
+            for (Element enclosed : currentElement.getEnclosedElements()) {
+                if (enclosed.getKind() == ElementKind.FIELD) {
+                    AnnotationMirror fieldAnn = getAnnotationMirror(enclosed, configValueName);
+                    if (fieldAnn != null) {
+                        declaredFields.add((VariableElement) enclosed);
                     }
                 }
-                fieldCache.put(qualifiedName, declaredFields);
             }
 
             for (VariableElement field : declaredFields) {
@@ -123,10 +135,10 @@ public class ConfigContractProcessor extends AbstractProcessor {
         }
 
 
-        generateClass(targetPackage, configName, configFields, extension);
+        generateClass(targetPackage, configName, configFields, extension, configValueName, generatedConfigName);
     }
 
-    private void generateClass(String packageName, String className, List<VariableElement> fields, String extension) throws IOException {
+    private void generateClass(String packageName, String className, List<VariableElement> fields, String extension, String configValueName, String generatedConfigName) throws IOException {
         JavaFileObject builderFile = processingEnv.getFiler().createSourceFile(packageName + "." + className);
         try (PrintWriter printWriter = new PrintWriter(builderFile.openWriter())) {
 
@@ -140,7 +152,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             imports.add("java.io.IOException");
             imports.add("java.util.List");
             imports.add("java.util.concurrent.CompletableFuture");
-            imports.add("net.democracycraft.democracyLib.api.config.GeneratedConfig");
+            imports.add(generatedConfigName);
 
             for (VariableElement field : fields) {
                 extractImports(field.asType().toString(), imports);
@@ -214,7 +226,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println("        }");
             printWriter.println();
             for (VariableElement field : fields) {
-                AnnotationMirror cv = getAnnotationMirror(field, ConfigValue.class.getName());
+                AnnotationMirror cv = getAnnotationMirror(field, configValueName);
                 if (cv == null) continue;
 
                 String path = getAnnotationValue(cv, "fieldName", String.class);
@@ -253,7 +265,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             // Save Method (Sync)
             printWriter.println("    public void save() {");
             for (VariableElement field : fields) {
-                AnnotationMirror cv = getAnnotationMirror(field, ConfigValue.class.getName());
+                AnnotationMirror cv = getAnnotationMirror(field, configValueName);
                 if (cv != null) {
                     String path = getAnnotationValue(cv, "fieldName", String.class);
                     printWriter.println("        yaml.set(\"" + path + "\", this." + field.getSimpleName() + ");");
