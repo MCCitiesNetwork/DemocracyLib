@@ -1,6 +1,7 @@
 package net.democracycraft.democracyLib.internal.bootstrap.handler;
 
 import org.jetbrains.annotations.NotNull;
+import org.jspecify.annotations.NonNull;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -52,10 +53,10 @@ public class GenericDemocracyBootstrapHandler implements DemocracyBootstrapHandl
         return mh.invokeWithArguments(full);
     }
 
-    protected static Method resolveByNameAndArity(Class<?> type, String name, int arity) {
-        for (Method m : type.getMethods()) {
-            if (m.getName().equals(name) && m.getParameterCount() == arity) {
-                return m;
+    protected static @NonNull Method resolveByNameAndArity(@NonNull Class<?> type, String name, int arity) {
+        for (Method method : type.getMethods()) {
+            if (method.getName().equals(name) && method.getParameterCount() == arity) {
+                return method;
             }
         }
         throw new IllegalStateException("Could not find method " + name + "/" + arity + " on " + type.getName());

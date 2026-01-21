@@ -47,7 +47,7 @@ public class DemocracyLibReflectiveApi implements DemocracyLibApi {
         return create(caller, leader, providerFactory, false);
     }
 
-    public  static @NotNull DemocracyLibApi create(@NotNull JavaPlugin caller,
+    public static @NotNull DemocracyLibApi create(@NotNull JavaPlugin caller,
                                           @NotNull Object leader,
                                           @NotNull DemocracyBootstrap.ProviderFactory providerFactory,
                                           boolean logging) {

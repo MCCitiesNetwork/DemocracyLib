@@ -1,11 +1,10 @@
 package net.democracycraft.democracyLib.internal.bootstrap;
 
-import net.democracycraft.democracyLib.api.bootstrap.GeneratedBridgeContract;
-import org.jetbrains.annotations.NotNull;
-
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
+import net.democracycraft.democracyLib.api.bootstrap.GeneratedBridgeContract;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Shared helpers for reflection/MethodHandle based bridges.
