@@ -1,5 +1,4 @@
 package net.democracycraft.democracyLib.processor;
-import net.democracycraft.democracyLib.api.config.ConfigFormat;
 import net.democracycraft.democracyLib.api.config.Configurable;
 import net.democracycraft.democracyLib.api.config.ConfigValue;
 import javax.annotation.processing.AbstractProcessor;
@@ -17,13 +16,19 @@ import javax.tools.JavaFileObject;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import javax.lang.model.type.TypeKind;
 
 @SupportedAnnotationTypes("net.democracycraft.democracyLib.api.config.Configurable")
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class ConfigContractProcessor extends AbstractProcessor {
+
+    private final Map<String, List<VariableElement>> fieldCache = new HashMap<>();
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
@@ -36,7 +41,6 @@ public class ConfigContractProcessor extends AbstractProcessor {
                 processConfigClass((TypeElement) element);
             } catch (Exception e) {
                 processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Failed to generate config for " + element.getSimpleName() + ": " + e.getMessage());
-                e.printStackTrace();
             }
         }
         return true;
@@ -55,11 +59,39 @@ public class ConfigContractProcessor extends AbstractProcessor {
         }
 
         List<VariableElement> configFields = new ArrayList<>();
-        for (Element enclosed : classElement.getEnclosedElements()) {
-            if (enclosed.getKind() == ElementKind.FIELD && enclosed.getAnnotation(ConfigValue.class) != null) {
-                configFields.add((VariableElement) enclosed);
+        Set<String> processedFieldNames = new HashSet<>();
+        TypeElement currentElement = classElement;
+
+        while (currentElement != null) {
+            String qualifiedName = currentElement.getQualifiedName().toString();
+            List<VariableElement> declaredFields;
+
+            if (fieldCache.containsKey(qualifiedName)) {
+                declaredFields = fieldCache.get(qualifiedName);
+            } else {
+                declaredFields = new ArrayList<>();
+                for (Element enclosed : currentElement.getEnclosedElements()) {
+                    if (enclosed.getKind() == ElementKind.FIELD && enclosed.getAnnotation(ConfigValue.class) != null) {
+                        declaredFields.add((VariableElement) enclosed);
+                    }
+                }
+                fieldCache.put(qualifiedName, declaredFields);
             }
+
+            for (VariableElement field : declaredFields) {
+                String fieldName = field.getSimpleName().toString();
+                if (processedFieldNames.add(fieldName)) {
+                    configFields.add(field);
+                }
+            }
+
+            TypeMirror superClassType = currentElement.getSuperclass();
+            if (superClassType.getKind() == TypeKind.NONE) {
+                break;
+            }
+            currentElement = (TypeElement) processingEnv.getTypeUtils().asElement(superClassType);
         }
+
 
         generateClass(targetPackage, configName, configFields);
     }
@@ -81,11 +113,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             imports.add("net.democracycraft.democracyLib.api.config.GeneratedConfig");
 
             for (VariableElement field : fields) {
-                String rawType = field.asType().toString();
-                if (rawType.contains("<")) rawType = rawType.substring(0, rawType.indexOf("<"));
-                if (!rawType.startsWith("java.lang.") && !isPrimitive(rawType)) {
-                    imports.add(rawType);
-                }
+                extractImports(field.asType().toString(), imports);
             }
 
             for (String imp : imports) {
@@ -101,8 +129,8 @@ public class ConfigContractProcessor extends AbstractProcessor {
 
             // Fields
             for (VariableElement field : fields) {
-                String simpleType = field.asType().toString().replace("java.lang.", "").replace("java.util.List", "List");
-                printWriter.println("    private " + simpleType + " " + field.getSimpleName() + ";");
+                String type = simplifyType(field.asType().toString());
+                printWriter.println("    private " + type + " " + field.getSimpleName() + ";");
             }
             printWriter.println();
 
@@ -130,11 +158,11 @@ public class ConfigContractProcessor extends AbstractProcessor {
             // Getters
             for (VariableElement field : fields) {
                 String fieldName = field.getSimpleName().toString();
-                String simpleType = field.asType().toString().replace("java.lang.", "").replace("java.util.List", "List");
-                String getterPrefix = simpleType.equalsIgnoreCase("boolean") ? "is" : "get";
+                String type = simplifyType(field.asType().toString());
+                String getterPrefix = type.equalsIgnoreCase("boolean") ? "is" : "get";
                 String getterName = getterPrefix + Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
 
-                printWriter.println("    public " + simpleType + " " + getterName + "() {");
+                printWriter.println("    public " + type + " " + getterName + "() {");
                 printWriter.println("        return this." + fieldName + ";");
                 printWriter.println("    }");
             }
@@ -156,7 +184,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
                 String path = configValue.fieldName();
                 String fieldName = field.getSimpleName().toString();
                 String typeFqn = field.asType().toString();
-                String simpleType = typeFqn.replace("java.lang.", "").replace("java.util.List", "List");
+                String simpleType = simplifyType(typeFqn);
 
                 printWriter.println("        if (yaml.contains(\"" + path + "\")) {");
                 if (typeFqn.equals("int") || typeFqn.equals("java.lang.Integer")) {
@@ -226,7 +254,16 @@ public class ConfigContractProcessor extends AbstractProcessor {
         }
     }
 
-    private boolean isPrimitive(String type) {
-        return type.equals("int") || type.equals("boolean") || type.equals("double") || type.equals("long") || type.equals("float") || type.equals("short") || type.equals("byte") || type.equals("char");
+    private void extractImports(String typeString, Set<String> imports) {
+        String[] parts = typeString.split("[<>,\\s]+");
+        for (String part : parts) {
+            if (part.contains(".") && !part.startsWith("java.lang.")) {
+                imports.add(part);
+            }
+        }
+    }
+
+    private String simplifyType(String typeString) {
+        return typeString.replaceAll("\\b(?:[a-z0-9_]+\\.)+([A-Z]\\w*)", "$1");
     }
 }
