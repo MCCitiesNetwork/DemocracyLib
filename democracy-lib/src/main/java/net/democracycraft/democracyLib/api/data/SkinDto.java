@@ -1,14 +1,18 @@
 package net.democracycraft.democracyLib.api.data;
 
 import net.democracycraft.democracyLib.internal.data.SkinDtoImpl;
+import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.NotNull;
+import org.jspecify.annotations.NonNull;
 
 public interface SkinDto {
 
-    String value();
+    @NotNull String value();
 
-    String signature();
+    @NotNull String signature();
 
-    static SkinDto of(String value, String signature) {
+    @Contract("_, _ -> new")
+    static @NonNull SkinDto of(@NotNull String value, @NotNull String signature) {
         return new SkinDtoImpl(value, signature);
     }
 
