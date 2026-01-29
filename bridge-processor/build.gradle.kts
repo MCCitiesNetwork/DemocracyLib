@@ -17,4 +17,6 @@ repositories {
 
 dependencies {
     implementation(project(":bridge-contract"))
+    compileOnly("com.google.auto.service:auto-service:1.1.1")
+    annotationProcessor("com.google.auto.service:auto-service:1.1.1")
 }

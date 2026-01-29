@@ -145,7 +145,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             TypeElement typeElement = getTypeElement(fieldType);
 
             if (typeElement != null && !dependencies.contains(typeElement)) {
-                if (isConfigurable(typeElement, configurableName)) {
+                if (isConfigurable(typeElement)) {
                     dependencies.add(typeElement);
                     collectDependencies(collectConfigurableFields(typeElement, configurableName.replace("Configurable", "ConfigValue")), dependencies, configurableName);
                 }
@@ -157,7 +157,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
                 if (types.isSameType(types.erasure(declaredType), types.erasure(listElement.asType())) && !declaredType.getTypeArguments().isEmpty()) {
                     TypeMirror genericType = declaredType.getTypeArguments().getFirst();
                     TypeElement genericElement = getTypeElement(genericType);
-                    if (genericElement != null && !dependencies.contains(genericElement) && isConfigurable(genericElement, configurableName)) {
+                    if (genericElement != null && !dependencies.contains(genericElement) && isConfigurable(genericElement)) {
                         dependencies.add(genericElement);
                         collectDependencies(collectConfigurableFields(genericElement, configurableName.replace("Configurable", "ConfigValue")), dependencies, configurableName);
                     }
@@ -173,7 +173,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
         return null;
     }
 
-    private boolean isConfigurable(TypeElement typeElement, String configurableName) {
+    private boolean isConfigurable(TypeElement typeElement) {
         for (AnnotationMirror mirror : typeElement.getAnnotationMirrors()) {
             if (mirror.getAnnotationType().asElement().getSimpleName().contentEquals("Configurable")) {
                 return true;
@@ -408,7 +408,6 @@ public class ConfigContractProcessor extends AbstractProcessor {
 
     private void generateDependencyHelpers(PrintWriter printWriter, TypeElement typeElement, String configValueName) {
         String typeName = typeElement.getSimpleName().toString();
-        String qualifiedName = typeElement.getQualifiedName().toString();
         List<VariableElement> fields = collectConfigurableFields(typeElement, configValueName);
 
         // Serialize
@@ -424,7 +423,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             // Nested check
             TypeMirror fieldType = field.asType();
             TypeElement fieldTypeElement = getTypeElement(fieldType);
-            boolean isNested = fieldTypeElement != null && isConfigurable(fieldTypeElement, configValueName.replace("ConfigValue", "Configurable"));
+            boolean isNested = fieldTypeElement != null && isConfigurable(fieldTypeElement);
 
             if (isNested) {
                  printWriter.println("        map.put(\"" + path + "\", serialize" + fieldTypeElement.getSimpleName() + "((" + getGeneratedSimpleClassName(fieldTypeElement) + ") " + handleName + ".get(instance)));");
@@ -454,7 +453,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
              // Nested check
             TypeMirror fieldType = field.asType();
             TypeElement fieldTypeElement = getTypeElement(fieldType);
-            boolean isNested = fieldTypeElement != null && isConfigurable(fieldTypeElement, configValueName.replace("ConfigValue", "Configurable"));
+            boolean isNested = fieldTypeElement != null && isConfigurable(fieldTypeElement);
 
             printWriter.println("        if (map.containsKey(\"" + path + "\")) {");
             if (isNested) {

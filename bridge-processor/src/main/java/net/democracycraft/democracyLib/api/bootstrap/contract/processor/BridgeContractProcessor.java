@@ -1,5 +1,6 @@
 package net.democracycraft.democracyLib.api.bootstrap.contract.processor;
 
+import com.google.auto.service.AutoService;
 import net.democracycraft.democracyLib.api.bootstrap.contract.*;
 
 import javax.annotation.processing.*;
@@ -24,6 +25,7 @@ import java.util.stream.Collectors;
  * and generates a deterministic contract class with method identifiers and signatures.
  * <p>
  */
+@AutoService(Processor.class)
 @SupportedAnnotationTypes({
         "net.democracycraft.democracyLib.api.bootstrap.contract.BridgeApi",
         "net.democracycraft.democracyLib.api.bootstrap.contract.BridgeMethod",
