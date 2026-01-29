@@ -29,51 +29,33 @@ import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
-@SupportedAnnotationTypes("*")
+@SupportedAnnotationTypes("net.democracycraft.democracyLib.api.config.Configurable")
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class ConfigContractProcessor extends AbstractProcessor {
 
+    private static final String CONFIGURABLE_ANNOTATION_TYPE = "net.democracycraft.democracyLib.api.config.Configurable";
+
     private Types types;
+    private Elements elements;
     private TypeElement listElement;
 
     @Override
     public synchronized void init(javax.annotation.processing.ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
         this.types = processingEnv.getTypeUtils();
-        Elements elements = processingEnv.getElementUtils();
-        this.listElement = elements.getTypeElement("java.util.List");
+        this.elements = processingEnv.getElementUtils();
+        this.listElement = this.elements.getTypeElement("java.util.List");
     }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         for (TypeElement annotation : annotations) {
-            if (isConfigurableAnnotation(annotation)) {
+            if (annotation.getQualifiedName().contentEquals(CONFIGURABLE_ANNOTATION_TYPE)) {
                 processAnnotation(annotation, roundEnv);
+                return true;
             }
         }
         return false;
-    }
-
-    private boolean isConfigurableAnnotation(TypeElement annotation) {
-        if (!annotation.getSimpleName().contentEquals("Configurable")) {
-            return false;
-        }
-        boolean hasName = false;
-        boolean hasTargetPackage = false;
-        // Format might be optional or added later, so we don't strictly require it for detection
-        // if the user is shading/relocating or using a slightly different version
-
-        for (Element enclosed : annotation.getEnclosedElements()) {
-            if (enclosed.getKind() == ElementKind.METHOD) {
-                String name = enclosed.getSimpleName().toString();
-                if (name.equals("name")) {
-                    hasName = true;
-                } else if (name.equals("targetPackage")) {
-                    hasTargetPackage = true;
-                }
-            }
-        }
-        return hasName && hasTargetPackage;
     }
 
     private void processAnnotation(TypeElement annotationType, RoundEnvironment roundEnv) {
@@ -89,7 +71,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             try {
                 processConfigClass((TypeElement) element, annotationType.getQualifiedName().toString(), configValueName, generatedConfigName);
             } catch (Exception e) {
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Failed to generate config for " + element.getSimpleName() + ": " + e.getMessage());
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Failed to generate config for " + element.getSimpleName() + ": " + e.getMessage(), element);
             }
         }
     }
