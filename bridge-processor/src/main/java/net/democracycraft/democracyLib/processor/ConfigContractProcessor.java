@@ -36,15 +36,14 @@ public class ConfigContractProcessor extends AbstractProcessor {
     private static final String CONFIGURABLE_ANNOTATION_TYPE = "net.democracycraft.democracyLib.api.config.Configurable";
 
     private Types types;
-    private Elements elements;
     private TypeElement listElement;
 
     @Override
     public synchronized void init(javax.annotation.processing.ProcessingEnvironment processingEnv) {
         super.init(processingEnv);
         this.types = processingEnv.getTypeUtils();
-        this.elements = processingEnv.getElementUtils();
-        this.listElement = this.elements.getTypeElement("java.util.List");
+        Elements elements = processingEnv.getElementUtils();
+        this.listElement = elements.getTypeElement("java.util.List");
     }
 
     @Override
@@ -99,93 +98,68 @@ public class ConfigContractProcessor extends AbstractProcessor {
             targetPackage = processingEnv.getElementUtils().getPackageOf(classElement).getQualifiedName().toString();
         }
 
-        List<VariableElement> configFields = collectConfigurableFields(classElement, configValueName);
+        Map<String, ConfigItem> configItems = new java.util.LinkedHashMap<>();
+        collectConfigItems(classElement, configItems, configValueName);
 
-        Set<TypeElement> dependencyTypes = new HashSet<>();
-        collectDependencies(configFields, dependencyTypes, configurableName);
-
-        generateClass(targetPackage, configName, configFields, extension, configValueName, generatedConfigName, dependencyTypes);
+        generateClass(classElement, targetPackage, configName, configItems, extension, configValueName, generatedConfigName);
     }
 
-    private List<VariableElement> collectConfigurableFields(TypeElement classElement, String configValueName) {
-        List<VariableElement> configFields = new ArrayList<>();
-        Set<String> processedFieldNames = new HashSet<>();
-        TypeElement currentElement = classElement;
+    private static class ConfigItem {
+        String name;
+        String comment;
+        TypeMirror type;
+        String fieldName; // Internal variable name
+        Element sourceElement;
 
-        while (currentElement != null) {
-            List<VariableElement> declaredFields = new ArrayList<>();
+        ConfigItem(String name, String comment, TypeMirror type, String fieldName, Element sourceElement) {
+            this.name = name;
+            this.comment = comment;
+            this.type = type;
+            this.fieldName = fieldName;
+            this.sourceElement = sourceElement;
+        }
+    }
 
-            for (Element enclosed : currentElement.getEnclosedElements()) {
-                if (enclosed.getKind() == ElementKind.FIELD) {
-                    AnnotationMirror fieldAnn = getAnnotationMirror(enclosed, configValueName);
-                    if (fieldAnn != null) {
-                        declaredFields.add((VariableElement) enclosed);
+    private void collectConfigItems(TypeElement element, Map<String, ConfigItem> items, String configValueName) {
+        // Recursive search in Interfaces
+        for (TypeMirror iface : element.getInterfaces()) {
+            collectConfigItems((TypeElement) ((DeclaredType) iface).asElement(), items, configValueName);
+        }
+
+        // Recursive search in Superclass
+        TypeMirror superclass = element.getSuperclass();
+        if (superclass.getKind() != TypeKind.NONE && !superclass.toString().equals("java.lang.Object")) {
+            collectConfigItems((TypeElement) ((DeclaredType) superclass).asElement(), items, configValueName);
+        }
+
+        for (Element enclosed : element.getEnclosedElements()) {
+            AnnotationMirror ann = getAnnotationMirror(enclosed, configValueName);
+            if (ann != null) {
+                String name = getAnnotationValue(ann, "fieldName", String.class);
+                String comment = getAnnotationValue(ann, "comment", String.class);
+                if (comment == null) comment = "";
+
+                if (enclosed.getKind() == ElementKind.METHOD) {
+                    ExecutableElement method = (ExecutableElement) enclosed;
+                    if (name == null || name.isEmpty()) {
+                        name = method.getSimpleName().toString();
                     }
-                }
-            }
-
-            for (VariableElement field : declaredFields) {
-                String fieldName = field.getSimpleName().toString();
-                if (processedFieldNames.add(fieldName)) {
-                    configFields.add(field);
-                }
-            }
-
-            TypeMirror superClassType = currentElement.getSuperclass();
-            if (superClassType.getKind() == TypeKind.NONE) {
-                break;
-            }
-            currentElement = (TypeElement) processingEnv.getTypeUtils().asElement(superClassType);
-        }
-        return configFields;
-    }
-
-    private void collectDependencies(List<VariableElement> fields, Set<TypeElement> dependencies, String configurableName) {
-        for (VariableElement field : fields) {
-            TypeMirror fieldType = field.asType();
-            TypeElement typeElement = getTypeElement(fieldType);
-
-            // Check if direct Configurable
-            if (typeElement != null && !dependencies.contains(typeElement)) {
-                if (isConfigurable(typeElement)) {
-                    dependencies.add(typeElement);  // Add to dependencies
-                    collectDependencies(collectConfigurableFields(typeElement, configurableName.replace("Configurable", "ConfigValue")), dependencies, configurableName);
-                }
-            }
-
-            // Check if List of Configurable
-            if (fieldType.getKind() == TypeKind.DECLARED) {
-                DeclaredType declaredType = (DeclaredType) fieldType;
-                if (types.isSameType(types.erasure(declaredType), types.erasure(listElement.asType())) && !declaredType.getTypeArguments().isEmpty()) {
-                    TypeMirror genericType = declaredType.getTypeArguments().getFirst();
-                    TypeElement genericElement = getTypeElement(genericType);
-
-                    if (genericElement != null && !dependencies.contains(genericElement) && isConfigurable(genericElement)) {
-                        dependencies.add(genericElement); // Add to dependencies
-                        collectDependencies(collectConfigurableFields(genericElement, configurableName.replace("Configurable", "ConfigValue")), dependencies, configurableName);
+                    // For methods, we use the method name as the key if not specified,
+                    // and also as the internal field name (to avoid conflicts, maybe prefix?)
+                    // if we implement the interface, the method name is fixed
+                    items.put(name, new ConfigItem(name, comment, method.getReturnType(), method.getSimpleName().toString(), enclosed));
+                } else if (enclosed.getKind() == ElementKind.FIELD) {
+                    VariableElement field = (VariableElement) enclosed;
+                    if (name == null || name.isEmpty()) {
+                        name = field.getSimpleName().toString();
                     }
+                    items.put(name, new ConfigItem(name, comment, field.asType(), field.getSimpleName().toString(), enclosed));
                 }
             }
         }
     }
 
-    private TypeElement getTypeElement(TypeMirror typeMirror) {
-        if (typeMirror.getKind() == TypeKind.DECLARED) {
-            return (TypeElement) ((DeclaredType) typeMirror).asElement();
-        }
-        return null;
-    }
-
-    private boolean isConfigurable(TypeElement typeElement) {
-        for (AnnotationMirror mirror : typeElement.getAnnotationMirrors()) {
-            if (mirror.getAnnotationType().asElement().getSimpleName().contentEquals("Configurable")) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void generateClass(String packageName, String className, List<VariableElement> fields, String extension, String configValueName, String generatedConfigName, Set<TypeElement> dependencyTypes) throws IOException {
+    private void generateClass(TypeElement sourceElement, String packageName, String className, Map<String, ConfigItem> items, String extension, String configValueName, String generatedConfigName) throws IOException {
         JavaFileObject builderFile = processingEnv.getFiler().createSourceFile(packageName + "." + className);
         try (PrintWriter printWriter = new PrintWriter(builderFile.openWriter())) {
 
@@ -201,20 +175,16 @@ public class ConfigContractProcessor extends AbstractProcessor {
             imports.add("java.util.List");
             imports.add("java.util.ArrayList");
             imports.add("java.util.Map");
-            imports.add("java.util.HashMap");
-            imports.add("java.util.LinkedHashMap");
             imports.add("java.util.concurrent.CompletableFuture");
-            imports.add("java.lang.invoke.MethodHandles");
-            imports.add("java.lang.invoke.VarHandle");
             imports.add(generatedConfigName);
 
-            for (VariableElement field : fields) {
-                extractImports(field.asType().toString(), imports);
+            // Import types from items
+            for (ConfigItem item : items.values()) {
+                extractImports(item.type.toString(), imports);
             }
-
-            for (TypeElement depElement : dependencyTypes) {
-                imports.add(depElement.getQualifiedName().toString());
-                imports.add(getGeneratedConfigClassName(depElement));
+            // Import source element if different package
+             if (!processingEnv.getElementUtils().getPackageOf(sourceElement).getQualifiedName().toString().equals(packageName)) {
+                imports.add(sourceElement.getQualifiedName().toString());
             }
 
             for (String importString : imports) {
@@ -222,7 +192,11 @@ public class ConfigContractProcessor extends AbstractProcessor {
             }
             printWriter.println();
 
-            printWriter.println("public class " + className + " implements GeneratedConfig {");
+            if (sourceElement.getKind() == ElementKind.INTERFACE) {
+                printWriter.println("public class " + className + " implements " + sourceElement.getSimpleName() + ", GeneratedConfig {");
+            } else {
+                printWriter.println("public class " + className + " extends " + sourceElement.getSimpleName() + " implements GeneratedConfig {");
+            }
             printWriter.println();
             printWriter.println("    private File file;");
             printWriter.println("    private YamlConfiguration yamlConfiguration;");
@@ -230,54 +204,9 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println("    public static final String DEFAULT_FILENAME = \"" + className + extension + "\";");
             printWriter.println();
 
-            // VarHandles
-            for (TypeElement depElement : dependencyTypes) {
-                List<VariableElement> depFields = collectConfigurableFields(depElement, configValueName);
-                for (VariableElement field : depFields) {
-                    String handleName = getHandleName(depElement, field);
-                    printWriter.println("    private static final VarHandle " + handleName + ";");
-                }
-            }
-            if (!dependencyTypes.isEmpty()) {
-                printWriter.println();
-                printWriter.println("    static {");
-                printWriter.println("        MethodHandles.Lookup lookup = MethodHandles.lookup();");
-                printWriter.println("        try {");
-
-                for (TypeElement depElement : dependencyTypes) {
-                    String depClassName = getGeneratedConfigClassName(depElement);
-                    List<VariableElement> depFields = collectConfigurableFields(depElement, configValueName);
-                    for (VariableElement field : depFields) {
-                        String handleName = getHandleName(depElement, field);
-                        String fieldName = field.getSimpleName().toString();
-                        String fieldTypeClass;
-                        if (isListType(field.asType())) {
-                            fieldTypeClass = "List.class";
-                        } else {
-                            // Check if it is a Configurable dependency, use generated class name .class
-                            TypeElement typeEle = getTypeElement(field.asType());
-                            if (typeEle != null && dependencyTypes.contains(typeEle)) {
-                                fieldTypeClass = getGeneratedConfigClassName(typeEle) + ".class";
-                            } else {
-                                fieldTypeClass = types.erasure(field.asType()).toString() + ".class";
-                            }
-                        }
-
-                        printWriter.println("            " + handleName + " = MethodHandles.privateLookupIn(" + depClassName + ".class, lookup).findVarHandle(" + depClassName + ".class, \"" + fieldName + "\", " + fieldTypeClass + ");");
-                    }
-                }
-
-                printWriter.println("        } catch (ReflectiveOperationException exception) {");
-                printWriter.println("            throw new ExceptionInInitializerError(exception);");
-                printWriter.println("        }");
-                printWriter.println("    }");
-            }
-            printWriter.println();
-
             // Fields
-            for (VariableElement field : fields) {
-                String type = getFieldType(field, dependencyTypes);
-                printWriter.println("    private " + type + " " + field.getSimpleName() + ";");
+            for (ConfigItem item : items.values()) {
+                printWriter.println("    private " + item.type.toString() + " " + item.fieldName + ";");
             }
             printWriter.println();
 
@@ -302,23 +231,25 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println("    }");
             printWriter.println();
 
-            // Getters
-            for (VariableElement field : fields) {
-                String fieldName = field.getSimpleName().toString();
-                String type = getFieldType(field, dependencyTypes);
-                String getterPrefix = type.equalsIgnoreCase("boolean") ? "is" : "get";
-                String getterName = getterPrefix + Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
+            // Implementations (Getters/Methods)
+            for (ConfigItem item : items.values()) {
+                if (item.sourceElement.getKind() == ElementKind.METHOD) {
+                    printWriter.println("    @Override");
+                    printWriter.println("    public " + item.type.toString() + " " + item.sourceElement.getSimpleName() + "() {");
+                    printWriter.println("        return this." + item.fieldName + ";");
+                    printWriter.println("    }");
+                } else {
+                    String fieldName = item.fieldName;
+                    String type = item.type.toString();
+                    String getterPrefix = type.equalsIgnoreCase("boolean") ? "is" : "get";
+                    String getterName = getterPrefix + Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
 
-                printWriter.println("    public " + type + " " + getterName + "() {");
-                printWriter.println("        return this." + fieldName + ";");
-                printWriter.println("    }");
+                    printWriter.println("    public " + type + " " + getterName + "() {");
+                    printWriter.println("        return this." + item.fieldName + ";");
+                    printWriter.println("    }");
+                }
             }
             printWriter.println();
-
-            // Serialization Helpers
-            for (TypeElement depElement : dependencyTypes) {
-                generateDependencyHelpers(printWriter, depElement, configValueName, dependencyTypes);
-            }
 
             // Load Method (Sync)
             printWriter.println("    public void load() {");
@@ -331,8 +262,8 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println("        }");
             printWriter.println();
 
-            for (VariableElement field : fields) {
-                generateFieldLoad(printWriter, field, configValueName, dependencyTypes);
+            for (ConfigItem item : items.values()) {
+                generateItemLoad(printWriter, item);
             }
 
             printWriter.println("    }");
@@ -344,10 +275,14 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println("    }");
             printWriter.println();
 
-            // Save Method (Sync)
+            // Save Method (Sync) with COMMENTS
             printWriter.println("    public void save() {");
-            for (VariableElement field : fields) {
-                generateFieldSave(printWriter, field, configValueName, dependencyTypes);
+            for (ConfigItem item : items.values()) {
+                generateItemSave(printWriter, item);
+                if (item.comment != null && !item.comment.isEmpty()) {
+                     // Bukkit API for comments
+                     printWriter.println("        yamlConfiguration.setComments(\"" + item.name + "\", java.util.List.of(\"" + item.comment + "\"));");
+                }
             }
             printWriter.println("        try {");
             printWriter.println("            yamlConfiguration.save(file);");
@@ -382,146 +317,19 @@ public class ConfigContractProcessor extends AbstractProcessor {
         }
     }
 
-    private String getFieldType(VariableElement field, Set<TypeElement> dependencyTypes) {
-        TypeMirror typeMirror = field.asType();
-        TypeElement typeElement = getTypeElement(typeMirror);
+    private void generateItemLoad(PrintWriter printWriter, ConfigItem item) {
+        String path = item.name;
+        String fieldName = item.fieldName;
+        String typeFqn = item.type.toString(); // Full Qualified Name or Simple if imported
 
-        // Check exact match
-        if (typeElement != null && dependencyTypes.contains(typeElement)) {
-            return getGeneratedSimpleClassName(typeElement);
-        }
-
-        // Check List
-        if (isListType(typeMirror)) {
-            DeclaredType dt = (DeclaredType) typeMirror;
-            if (!dt.getTypeArguments().isEmpty()) {
-                TypeMirror generic = dt.getTypeArguments().getFirst();
-                TypeElement genericElement = getTypeElement(generic);
-                if (genericElement != null && dependencyTypes.contains(genericElement)) {
-                    return "List<" + getGeneratedSimpleClassName(genericElement) + ">";
-                }
-            }
-        }
-        return simplifyType(typeMirror.toString());
-    }
-
-    private String getHandleName(TypeElement type, VariableElement field) {
-        String typeName = type.getQualifiedName().toString().replace(".", "_");
-        return "HANDLE_" + typeName + "_" + field.getSimpleName();
-    }
-
-    private void generateDependencyHelpers(PrintWriter printWriter, TypeElement typeElement, String configValueName, Set<TypeElement> dependencyTypes) {
-        String typeName = typeElement.getSimpleName().toString();
-        List<VariableElement> fields = collectConfigurableFields(typeElement, configValueName);
-
-        // Serialize
-        String inputType = getGeneratedSimpleClassName(typeElement);
-        printWriter.println("    private Map<String, Object> serialize" + typeName + "(" + inputType + " instance) {");
-        printWriter.println("        Map<String, Object> map = new LinkedHashMap<>();");
-        for (VariableElement field : fields) {
-            AnnotationMirror annotationMirror = getAnnotationMirror(field, configValueName);
-            if(annotationMirror == null) continue;
-            String path = getAnnotationValue(annotationMirror, "fieldName", String.class);
-            String handleName = getHandleName(typeElement, field);
-
-            // Nested check
-            TypeMirror fieldType = field.asType();
-            TypeElement fieldTypeElement = getTypeElement(fieldType);
-            boolean isNested = fieldTypeElement != null && dependencyTypes.contains(fieldTypeElement);
-
-            if (isNested) {
-                printWriter.println("        map.put(\"" + path + "\", serialize" + fieldTypeElement.getSimpleName() + "((" + getGeneratedSimpleClassName(fieldTypeElement) + ") " + handleName + ".get(instance)));");
-            } else {
-                printWriter.println("        map.put(\"" + path + "\", " + handleName + ".get(instance));");
-            }
-        }
-        printWriter.println("        return map;");
-        printWriter.println("    }");
-        printWriter.println();
-
-        // Deserialize
-        // Return the Generated Config Class
-        String returnType = getGeneratedSimpleClassName(typeElement);
-        printWriter.println("    private " + returnType + " deserialize" + typeName + "(Map<String, Object> map) {");
-        // We know GeneratedConfig has a no-args constructor
-        printWriter.println("        " + returnType + " instance = new " + returnType + "();");
-        printWriter.println("        if (map == null) return instance;");
-
-        for (VariableElement field : fields) {
-            AnnotationMirror annotationMirror = getAnnotationMirror(field, configValueName);
-            if(annotationMirror == null) continue;
-            String path = getAnnotationValue(annotationMirror, "fieldName", String.class);
-            String handleName = getHandleName(typeElement, field);
-            String fieldTypeStr = field.asType().toString();
-
-            // Nested check
-            TypeMirror fieldType = field.asType();
-            TypeElement fieldTypeElement = getTypeElement(fieldType);
-            boolean isNested = fieldTypeElement != null && dependencyTypes.contains(fieldTypeElement);
-
-            printWriter.println("        if (map.containsKey(\"" + path + "\")) {");
-            if (isNested) {
-                // Map<String, Object> nestedMap = (Map) map.get(path)
-                // The field in GeneratedConfig, so deserialize returns correctly
-                printWriter.println("            " + handleName + ".set(instance, deserialize" + fieldTypeElement.getSimpleName() + "((Map<String, Object>) map.get(\"" + path + "\")));");
-            } else if (fieldTypeStr.equals("int") || fieldTypeStr.equals("java.lang.Integer")) {
-                printWriter.println("            " + handleName + ".set(instance, (int) map.get(\"" + path + "\"));");
-            } else if (fieldTypeStr.equals("double") || fieldTypeStr.equals("java.lang.Double")) {
-                printWriter.println("            " + handleName + ".set(instance, (double) map.get(\"" + path + "\"));");
-            } else if (fieldTypeStr.equals("boolean") || fieldTypeStr.equals("java.lang.Boolean")) {
-                printWriter.println("            " + handleName + ".set(instance, (boolean) map.get(\"" + path + "\"));");
-            } else if (fieldTypeStr.equals("long") || fieldTypeStr.equals("java.lang.Long")) {
-                printWriter.println("            " + handleName + ".set(instance, (long) map.get(\"" + path + "\"));");
-            }  else if (fieldTypeStr.equals("java.lang.String")) {
-                printWriter.println("            " + handleName + ".set(instance, (String) map.get(\"" + path + "\"));");
-            }  else if (isListType(fieldType)) {
-                printWriter.println("            " + handleName + ".set(instance, (List) map.get(\"" + path + "\"));");
-            }
-            else {
-                printWriter.println("            " + handleName + ".set(instance, (" + simplifyType(fieldTypeStr) + ") map.get(\"" + path + "\"));");
-            }
-            printWriter.println("        }");
-        }
-        printWriter.println("        return instance;");
-        printWriter.println("    }");
-        printWriter.println();
-    }
-
-    private void generateFieldLoad(PrintWriter printWriter, VariableElement field, String configValueName, Set<TypeElement> dependencyTypes) {
-        AnnotationMirror cv = getAnnotationMirror(field, configValueName);
-        if (cv == null) return;
-        String path = getAnnotationValue(cv, "fieldName", String.class);
-        String fieldName = field.getSimpleName().toString();
-        String typeFqn = field.asType().toString();
-
-        // Check if nested
-        TypeElement typeElement = getTypeElement(field.asType());
-        boolean isNested = typeElement != null && dependencyTypes.contains(typeElement);
-
-        // Check if List<Nested>
-        boolean isListNested = false;
-        TypeElement listGenericType = null;
-        if (isListType(field.asType())) {
-            DeclaredType dt = (DeclaredType) field.asType();
-            if (!dt.getTypeArguments().isEmpty()) {
-                listGenericType = getTypeElement(dt.getTypeArguments().getFirst());
-                if (listGenericType != null && dependencyTypes.contains(listGenericType)) {
-                    isListNested = true;
-                }
-            }
-        }
+        // Since we are creating source code, we rely on the imports and simplified names used in field declarations
+        // But typeFqn from TypeMirror is usually fully qualified
+        // We have to match what Bukkit YamlConfiguration returns
 
         printWriter.println("        if (yamlConfiguration.contains(\"" + path + "\")) {");
-        if (isNested) {
-            printWriter.println("            this." + fieldName + " = deserialize" + typeElement.getSimpleName() + "(yamlConfiguration.getConfigurationSection(\"" + path + "\").getValues(false));");
-        } else if (isListNested) {
-            printWriter.println("            List<Map<?, ?>> listMaps = yamlConfiguration.getMapList(\"" + path + "\");");
-            printWriter.println("            List<" + listGenericType.getQualifiedName() + "> listObjects = new ArrayList<>();");
-            printWriter.println("            for (Map<?, ?> map : listMaps) {");
-            printWriter.println("                listObjects.add(deserialize" + listGenericType.getSimpleName() + "((Map<String, Object>) map));");
-            printWriter.println("            }");
-            printWriter.println("            this." + fieldName + " = listObjects;");
-        } else if (typeFqn.equals("int") || typeFqn.equals("java.lang.Integer")) {
+
+        // Basic Types
+        if (typeFqn.equals("int") || typeFqn.equals("java.lang.Integer")) {
             printWriter.println("            this." + fieldName + " = yamlConfiguration.getInt(\"" + path + "\");");
         } else if (typeFqn.equals("double") || typeFqn.equals("java.lang.Double")) {
             printWriter.println("            this." + fieldName + " = yamlConfiguration.getDouble(\"" + path + "\");");
@@ -531,51 +339,17 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println("            this." + fieldName + " = yamlConfiguration.getLong(\"" + path + "\");");
         } else if (typeFqn.equals("java.lang.String")) {
             printWriter.println("            this." + fieldName + " = yamlConfiguration.getString(\"" + path + "\");");
-        } else if (isListType(field.asType())) {
-            printWriter.println("            this." + fieldName + " = (List) yamlConfiguration.getList(\"" + path + "\");");
+        } else if (isListType(item.type)) {
+             printWriter.println("            this." + fieldName + " = (List) yamlConfiguration.getList(\"" + path + "\");");
         } else {
-            printWriter.println("            this." + fieldName + " = (" + simplifyType(typeFqn) + ") yamlConfiguration.get(\"" + path + "\");");
+            // Fallback for serializable objects
+            printWriter.println("            this." + fieldName + " = (" + item.type.toString() + ") yamlConfiguration.get(\"" + path + "\");");
         }
         printWriter.println("        }");
     }
 
-    private void generateFieldSave(PrintWriter printWriter, VariableElement field, String configValueName, Set<TypeElement> dependencyTypes) {
-        AnnotationMirror cv = getAnnotationMirror(field, configValueName);
-        if (cv == null) return;
-        String path = getAnnotationValue(cv, "fieldName", String.class);
-
-        // Check nested
-        TypeElement typeElement = getTypeElement(field.asType());
-        boolean isNested = typeElement != null && dependencyTypes.contains(typeElement);
-
-        // Check List<Nested>
-        boolean isListNested = false;
-        TypeElement listGenericType = null;
-        if (isListType(field.asType())) {
-            DeclaredType dt = (DeclaredType) field.asType();
-            if (!dt.getTypeArguments().isEmpty()) {
-                listGenericType = getTypeElement(dt.getTypeArguments().getFirst());
-                if (listGenericType != null && dependencyTypes.contains(listGenericType)) {
-                    isListNested = true;
-                }
-            }
-        }
-
-        if (isNested) {
-            printWriter.println("        if (this." + field.getSimpleName() + " != null) {");
-            printWriter.println("            yamlConfiguration.set(\"" + path + "\", serialize" + typeElement.getSimpleName() + "(this." + field.getSimpleName() + "));");
-            printWriter.println("        }");
-        } else if (isListNested) {
-            printWriter.println("        if (this." + field.getSimpleName() + " != null) {");
-            printWriter.println("            List<Map<String, Object>> listMaps = new ArrayList<>();");
-            printWriter.println("            for (" + listGenericType.getQualifiedName() + " item : this." + field.getSimpleName() + ") {");
-            printWriter.println("                listMaps.add(serialize" + listGenericType.getSimpleName() + "(item));");
-            printWriter.println("            }");
-            printWriter.println("            yamlConfiguration.set(\"" + path + "\", listMaps);");
-            printWriter.println("        }");
-        } else {
-            printWriter.println("        yamlConfiguration.set(\"" + path + "\", this." + field.getSimpleName() + ");");
-        }
+    private void generateItemSave(PrintWriter printWriter, ConfigItem item) {
+        printWriter.println("        yamlConfiguration.set(\"" + item.name + "\", this." + item.fieldName + ");");
     }
 
     private void extractImports(String typeString, Set<String> imports) {
@@ -658,3 +432,6 @@ public class ConfigContractProcessor extends AbstractProcessor {
         return false;
     }
 }
+
+
+
