@@ -311,7 +311,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             // Getters
             for (VariableElement field : fields) {
                 String fieldName = field.getSimpleName().toString();
-                String type = simplifyType(field.asType().toString());
+                String type = getFieldType(field, dependencyTypes, depElements);
                 String getterPrefix = type.equalsIgnoreCase("boolean") ? "is" : "get";
                 String getterName = getterPrefix + Character.toUpperCase(fieldName.charAt(0)) + fieldName.substring(1);
 
