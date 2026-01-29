@@ -1,7 +1,5 @@
 package net.democracycraft.democracyLib.processor;
 
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.RoundEnvironment;
@@ -125,7 +123,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
         generateClass(targetPackage, configName, configFields, extension, configValueName, generatedConfigName, dependencyTypes);
     }
 
-    private @NotNull List<VariableElement> collectConfigurableFields(TypeElement classElement, String configValueName) {
+    private List<VariableElement> collectConfigurableFields(TypeElement classElement, String configValueName) {
         List<VariableElement> configFields = new ArrayList<>();
         Set<String> processedFieldNames = new HashSet<>();
         TypeElement currentElement = classElement;
@@ -158,7 +156,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
         return configFields;
     }
 
-    private void collectDependencies(@NotNull List<VariableElement> fields, Set<TypeElement> dependencies, String configurableName) {
+    private void collectDependencies( List<VariableElement> fields, Set<TypeElement> dependencies, String configurableName) {
         for (VariableElement field : fields) {
             TypeMirror fieldType = field.asType();
             TypeElement typeElement = getTypeElement(fieldType);
@@ -185,7 +183,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
         }
     }
 
-    private @Nullable TypeElement getTypeElement(@NotNull TypeMirror typeMirror) {
+    private TypeElement getTypeElement(TypeMirror typeMirror) {
         if (typeMirror.getKind() == TypeKind.DECLARED) {
             return (TypeElement) ((DeclaredType) typeMirror).asElement();
         }
