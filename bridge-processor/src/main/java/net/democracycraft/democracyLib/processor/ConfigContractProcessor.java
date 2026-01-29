@@ -60,19 +60,20 @@ public class ConfigContractProcessor extends AbstractProcessor {
         }
         boolean hasName = false;
         boolean hasTargetPackage = false;
-        boolean hasFormat = false;
+        // Format might be optional or added later, so we don't strictly require it for detection
+        // if the user is shading/relocating or using a slightly different version
 
         for (Element enclosed : annotation.getEnclosedElements()) {
             if (enclosed.getKind() == ElementKind.METHOD) {
                 String name = enclosed.getSimpleName().toString();
-                switch (name) {
-                    case "name" -> hasName = true;
-                    case "targetPackage" -> hasTargetPackage = true;
-                    case "format" -> hasFormat = true;
+                if (name.equals("name")) {
+                    hasName = true;
+                } else if (name.equals("targetPackage")) {
+                    hasTargetPackage = true;
                 }
             }
         }
-        return hasName && hasTargetPackage && hasFormat;
+        return hasName && hasTargetPackage;
     }
 
     private void processAnnotation(TypeElement annotationType, RoundEnvironment roundEnv) {
