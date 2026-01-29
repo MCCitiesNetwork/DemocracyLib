@@ -15,6 +15,7 @@ import javax.tools.JavaFileObject;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -100,7 +101,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
 
         List<VariableElement> configFields = collectConfigurableFields(classElement, configValueName);
 
-        Set<TypeElement> dependencyTypes = new HashSet<>();
+        Set<String> dependencyTypes = new HashSet<>();
         collectDependencies(configFields, dependencyTypes, configurableName);
 
         generateClass(targetPackage, configName, configFields, extension, configValueName, generatedConfigName, dependencyTypes);
@@ -139,14 +140,14 @@ public class ConfigContractProcessor extends AbstractProcessor {
         return configFields;
     }
 
-    private void collectDependencies( List<VariableElement> fields, Set<TypeElement> dependencies, String configurableName) {
+    private void collectDependencies( List<VariableElement> fields, Set<String> dependencies, String configurableName) {
         for (VariableElement field : fields) {
             TypeMirror fieldType = field.asType();
             TypeElement typeElement = getTypeElement(fieldType);
 
-            if (typeElement != null && !dependencies.contains(typeElement)) {
+            if (typeElement != null && !dependencies.contains(typeElement.getQualifiedName().toString())) {
                 if (isConfigurable(typeElement)) {
-                    dependencies.add(typeElement);
+                    dependencies.add(typeElement.getQualifiedName().toString());
                     collectDependencies(collectConfigurableFields(typeElement, configurableName.replace("Configurable", "ConfigValue")), dependencies, configurableName);
                 }
             }
@@ -157,8 +158,8 @@ public class ConfigContractProcessor extends AbstractProcessor {
                 if (types.isSameType(types.erasure(declaredType), types.erasure(listElement.asType())) && !declaredType.getTypeArguments().isEmpty()) {
                     TypeMirror genericType = declaredType.getTypeArguments().getFirst();
                     TypeElement genericElement = getTypeElement(genericType);
-                    if (genericElement != null && !dependencies.contains(genericElement) && isConfigurable(genericElement)) {
-                        dependencies.add(genericElement);
+                    if (genericElement != null && !dependencies.contains(genericElement.getQualifiedName().toString()) && isConfigurable(genericElement)) {
+                        dependencies.add(genericElement.getQualifiedName().toString());
                         collectDependencies(collectConfigurableFields(genericElement, configurableName.replace("Configurable", "ConfigValue")), dependencies, configurableName);
                     }
                 }
@@ -182,7 +183,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
         return false;
     }
 
-    private void generateClass(String packageName, String className, List<VariableElement> fields, String extension, String configValueName, String generatedConfigName, Set<TypeElement> dependencyTypes) throws IOException {
+    private void generateClass(String packageName, String className, List<VariableElement> fields, String extension, String configValueName, String generatedConfigName, Set<String> dependencyTypes) throws IOException {
         JavaFileObject builderFile = processingEnv.getFiler().createSourceFile(packageName + "." + className);
         try (PrintWriter printWriter = new PrintWriter(builderFile.openWriter())) {
 
@@ -208,9 +209,14 @@ public class ConfigContractProcessor extends AbstractProcessor {
             for (VariableElement field : fields) {
                 extractImports(field.asType().toString(), imports);
             }
-            for (TypeElement dep : dependencyTypes) {
-                imports.add(dep.getQualifiedName().toString());
-                imports.add(getGeneratedConfigClassName(dep));
+            Map<String, TypeElement> depElements = new HashMap<>();
+            for (String dep : dependencyTypes) {
+                TypeElement element = elements.getTypeElement(dep);
+                if (element != null) {
+                    depElements.put(dep, element);
+                    imports.add(dep);
+                    imports.add(getGeneratedConfigClassName(element));
+                }
             }
 
             for (String importString : imports) {
@@ -227,10 +233,12 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println();
 
             // VarHandles
-            for (TypeElement dep : dependencyTypes) {
-                List<VariableElement> depFields = collectConfigurableFields(dep, configValueName);
+            for (String dep : dependencyTypes) {
+                TypeElement depElement = depElements.get(dep);
+                if (depElement == null) continue;
+                List<VariableElement> depFields = collectConfigurableFields(depElement, configValueName);
                 for (VariableElement field : depFields) {
-                    String handleName = getHandleName(dep, field);
+                    String handleName = getHandleName(depElement, field);
                     printWriter.println("    private static final VarHandle " + handleName + ";");
                 }
             }
@@ -240,11 +248,13 @@ public class ConfigContractProcessor extends AbstractProcessor {
                 printWriter.println("        MethodHandles.Lookup lookup = MethodHandles.lookup();");
                 printWriter.println("        try {");
 
-                for (TypeElement dep : dependencyTypes) {
-                    String depClassName = getGeneratedConfigClassName(dep);
-                    List<VariableElement> depFields = collectConfigurableFields(dep, configValueName);
+                for (String dep : dependencyTypes) {
+                    TypeElement depElement = depElements.get(dep);
+                    if (depElement == null) continue;
+                    String depClassName = getGeneratedConfigClassName(depElement);
+                    List<VariableElement> depFields = collectConfigurableFields(depElement, configValueName);
                     for (VariableElement field : depFields) {
-                        String handleName = getHandleName(dep, field);
+                        String handleName = getHandleName(depElement, field);
                         String fieldName = field.getSimpleName().toString();
                         String fieldTypeClass;
                         if (isListType(field.asType())) {
@@ -252,7 +262,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
                         } else {
                              // Check if it is a Configurable dependency, use generated class name .class
                              TypeElement typeEle = getTypeElement(field.asType());
-                             if (typeEle != null && dependencyTypes.contains(typeEle)) {
+                             if (typeEle != null && dependencyTypes.contains(typeEle.getQualifiedName().toString())) {
                                  fieldTypeClass = getGeneratedConfigClassName(typeEle) + ".class";
                              } else {
                                   fieldTypeClass = types.erasure(field.asType()).toString() + ".class";
@@ -272,7 +282,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
 
             // Fields
             for (VariableElement field : fields) {
-                String type = getFieldType(field, dependencyTypes);
+                String type = getFieldType(field, dependencyTypes, depElements);
                 printWriter.println("    private " + type + " " + field.getSimpleName() + ";");
             }
             printWriter.println();
@@ -312,8 +322,11 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println();
 
             // Serialization Helpers
-            for (TypeElement dep : dependencyTypes) {
-                generateDependencyHelpers(printWriter, dep, configValueName);
+            for (String dep : dependencyTypes) {
+                TypeElement depElement = depElements.get(dep);
+                if (depElement != null) {
+                    generateDependencyHelpers(printWriter, depElement, configValueName, dependencyTypes);
+                }
             }
 
             // Load Method (Sync)
@@ -328,7 +341,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println();
 
             for (VariableElement field : fields) {
-                generateFieldLoad(printWriter, field, configValueName, dependencyTypes);
+                generateFieldLoad(printWriter, field, configValueName, dependencyTypes, depElements);
             }
 
             printWriter.println("    }");
@@ -343,7 +356,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             // Save Method (Sync)
             printWriter.println("    public void save() {");
             for (VariableElement field : fields) {
-                generateFieldSave(printWriter, field, configValueName, dependencyTypes);
+                generateFieldSave(printWriter, field, configValueName, dependencyTypes, depElements);
             }
             printWriter.println("        try {");
             printWriter.println("            yamlConfiguration.save(file);");
@@ -378,12 +391,12 @@ public class ConfigContractProcessor extends AbstractProcessor {
         }
     }
 
-    private String getFieldType(VariableElement field, Set<TypeElement> dependencyTypes) {
+    private String getFieldType(VariableElement field, Set<String> dependencyTypes, Map<String, TypeElement> depElements) {
         TypeMirror typeMirror = field.asType();
         TypeElement typeElement = getTypeElement(typeMirror);
 
         // Check exact match
-        if (typeElement != null && dependencyTypes.contains(typeElement)) {
+        if (typeElement != null && dependencyTypes.contains(typeElement.getQualifiedName().toString())) {
             return getGeneratedSimpleClassName(typeElement);
         }
 
@@ -393,7 +406,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             if (!dt.getTypeArguments().isEmpty()) {
                 TypeMirror generic = dt.getTypeArguments().getFirst();
                 TypeElement genericElement = getTypeElement(generic);
-                if (genericElement != null && dependencyTypes.contains(genericElement)) {
+                if (genericElement != null && dependencyTypes.contains(genericElement.getQualifiedName().toString())) {
                     return "List<" + getGeneratedSimpleClassName(genericElement) + ">";
                 }
             }
@@ -406,7 +419,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
         return "HANDLE_" + typeName + "_" + field.getSimpleName();
     }
 
-    private void generateDependencyHelpers(PrintWriter printWriter, TypeElement typeElement, String configValueName) {
+    private void generateDependencyHelpers(PrintWriter printWriter, TypeElement typeElement, String configValueName, Set<String> dependencyTypes) {
         String typeName = typeElement.getSimpleName().toString();
         List<VariableElement> fields = collectConfigurableFields(typeElement, configValueName);
 
@@ -423,7 +436,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             // Nested check
             TypeMirror fieldType = field.asType();
             TypeElement fieldTypeElement = getTypeElement(fieldType);
-            boolean isNested = fieldTypeElement != null && isConfigurable(fieldTypeElement);
+            boolean isNested = fieldTypeElement != null && dependencyTypes.contains(fieldTypeElement.getQualifiedName().toString());
 
             if (isNested) {
                  printWriter.println("        map.put(\"" + path + "\", serialize" + fieldTypeElement.getSimpleName() + "((" + getGeneratedSimpleClassName(fieldTypeElement) + ") " + handleName + ".get(instance)));");
@@ -453,7 +466,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
              // Nested check
             TypeMirror fieldType = field.asType();
             TypeElement fieldTypeElement = getTypeElement(fieldType);
-            boolean isNested = fieldTypeElement != null && isConfigurable(fieldTypeElement);
+            boolean isNested = fieldTypeElement != null && dependencyTypes.contains(fieldTypeElement.getQualifiedName().toString());
 
             printWriter.println("        if (map.containsKey(\"" + path + "\")) {");
             if (isNested) {
@@ -483,7 +496,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
         printWriter.println();
     }
 
-    private void generateFieldLoad(PrintWriter printWriter, VariableElement field, String configValueName, Set<TypeElement> dependencyTypes) {
+    private void generateFieldLoad(PrintWriter printWriter, VariableElement field, String configValueName, Set<String> dependencyTypes, Map<String, TypeElement> depElements) {
         AnnotationMirror cv = getAnnotationMirror(field, configValueName);
         if (cv == null) return;
         String path = getAnnotationValue(cv, "fieldName", String.class);
@@ -492,7 +505,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
 
         // Check if nested
         TypeElement typeElement = getTypeElement(field.asType());
-        boolean isNested = typeElement != null && dependencyTypes.contains(typeElement);
+        boolean isNested = typeElement != null && dependencyTypes.contains(typeElement.getQualifiedName().toString());
 
         // Check if List<Nested>
         boolean isListNested = false;
@@ -501,7 +514,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             DeclaredType dt = (DeclaredType) field.asType();
              if (!dt.getTypeArguments().isEmpty()) {
                  listGenericType = getTypeElement(dt.getTypeArguments().getFirst());
-                 if (listGenericType != null && dependencyTypes.contains(listGenericType)) {
+                 if (listGenericType != null && dependencyTypes.contains(listGenericType.getQualifiedName().toString())) {
                      isListNested = true;
                  }
              }
@@ -535,14 +548,14 @@ public class ConfigContractProcessor extends AbstractProcessor {
         printWriter.println("        }");
     }
 
-    private void generateFieldSave(PrintWriter printWriter, VariableElement field, String configValueName, Set<TypeElement> dependencyTypes) {
+    private void generateFieldSave(PrintWriter printWriter, VariableElement field, String configValueName, Set<String> dependencyTypes, Map<String, TypeElement> depElements) {
         AnnotationMirror cv = getAnnotationMirror(field, configValueName);
         if (cv == null) return;
         String path = getAnnotationValue(cv, "fieldName", String.class);
 
         // Check nested
         TypeElement typeElement = getTypeElement(field.asType());
-        boolean isNested = typeElement != null && dependencyTypes.contains(typeElement);
+        boolean isNested = typeElement != null && dependencyTypes.contains(typeElement.getQualifiedName().toString());
 
         // Check List<Nested>
         boolean isListNested = false;
@@ -551,7 +564,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             DeclaredType dt = (DeclaredType) field.asType();
              if (!dt.getTypeArguments().isEmpty()) {
                  listGenericType = getTypeElement(dt.getTypeArguments().getFirst());
-                 if (listGenericType != null && dependencyTypes.contains(listGenericType)) {
+                 if (listGenericType != null && dependencyTypes.contains(listGenericType.getQualifiedName().toString())) {
                      isListNested = true;
                  }
              }
