@@ -1,10 +1,9 @@
 package net.democracycraft.democracyLib.processor;
 
 
-import javax.annotation.processing.AbstractProcessor;
-import javax.annotation.processing.RoundEnvironment;
-import javax.annotation.processing.SupportedAnnotationTypes;
-import javax.annotation.processing.SupportedSourceVersion;
+import com.google.auto.service.AutoService;
+
+import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
@@ -29,6 +28,7 @@ import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
+@AutoService(Processor.class)
 @SupportedAnnotationTypes("net.democracycraft.democracyLib.api.config.Configurable")
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public class ConfigContractProcessor extends AbstractProcessor {
@@ -174,7 +174,12 @@ public class ConfigContractProcessor extends AbstractProcessor {
     }
 
     private boolean isConfigurable(TypeElement typeElement, String configurableName) {
-        return getAnnotationMirror(typeElement, configurableName) != null;
+        for (AnnotationMirror mirror : typeElement.getAnnotationMirrors()) {
+            if (mirror.getAnnotationType().asElement().getSimpleName().contentEquals("Configurable")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void generateClass(String packageName, String className, List<VariableElement> fields, String extension, String configValueName, String generatedConfigName, Set<TypeElement> dependencyTypes) throws IOException {
@@ -236,15 +241,25 @@ public class ConfigContractProcessor extends AbstractProcessor {
                 printWriter.println("        try {");
 
                 for (TypeElement dep : dependencyTypes) {
-                    String depClassName = dep.getQualifiedName().toString();
+                    String depClassName = getGeneratedConfigClassName(dep);
                     List<VariableElement> depFields = collectConfigurableFields(dep, configValueName);
                     for (VariableElement field : depFields) {
                         String handleName = getHandleName(dep, field);
                         String fieldName = field.getSimpleName().toString();
-                        // Assume we can access private fields via privateLookupIn if Java 9+, OR use traditional reflection set accessible if handles fail?
-                        // But users requested MethodHandles using privateLookupIn or plain if accessible.
-                        // Since we are in potentially different package, we need privateLookupIn.
-                        printWriter.println("            " + handleName + " = MethodHandles.privateLookupIn(" + depClassName + ".class, lookup).findVarHandle(" + depClassName + ".class, \"" + fieldName + "\", " + types.erasure(field.asType()).toString() + ".class);");
+                        String fieldTypeClass;
+                        if (isListType(field.asType())) {
+                             fieldTypeClass = "List.class";
+                        } else {
+                             // Check if it is a Configurable dependency, use generated class name .class
+                             TypeElement typeEle = getTypeElement(field.asType());
+                             if (typeEle != null && dependencyTypes.contains(typeEle)) {
+                                 fieldTypeClass = getGeneratedConfigClassName(typeEle) + ".class";
+                             } else {
+                                  fieldTypeClass = types.erasure(field.asType()).toString() + ".class";
+                             }
+                        }
+
+                        printWriter.println("            " + handleName + " = MethodHandles.privateLookupIn(" + depClassName + ".class, lookup).findVarHandle(" + depClassName + ".class, \"" + fieldName + "\", " + fieldTypeClass + ");");
                     }
                 }
 
@@ -257,7 +272,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
 
             // Fields
             for (VariableElement field : fields) {
-                String type = simplifyType(field.asType().toString());
+                String type = getFieldType(field, dependencyTypes);
                 printWriter.println("    private " + type + " " + field.getSimpleName() + ";");
             }
             printWriter.println();
@@ -363,6 +378,29 @@ public class ConfigContractProcessor extends AbstractProcessor {
         }
     }
 
+    private String getFieldType(VariableElement field, Set<TypeElement> dependencyTypes) {
+        TypeMirror typeMirror = field.asType();
+        TypeElement typeElement = getTypeElement(typeMirror);
+
+        // Check exact match
+        if (typeElement != null && dependencyTypes.contains(typeElement)) {
+            return getGeneratedSimpleClassName(typeElement);
+        }
+
+        // Check List
+        if (isListType(typeMirror)) {
+            DeclaredType dt = (DeclaredType) typeMirror;
+            if (!dt.getTypeArguments().isEmpty()) {
+                TypeMirror generic = dt.getTypeArguments().getFirst();
+                TypeElement genericElement = getTypeElement(generic);
+                if (genericElement != null && dependencyTypes.contains(genericElement)) {
+                    return "List<" + getGeneratedSimpleClassName(genericElement) + ">";
+                }
+            }
+        }
+        return simplifyType(typeMirror.toString());
+    }
+
     private String getHandleName(TypeElement type, VariableElement field) {
         String typeName = type.getQualifiedName().toString().replace(".", "_");
         return "HANDLE_" + typeName + "_" + field.getSimpleName();
@@ -374,7 +412,8 @@ public class ConfigContractProcessor extends AbstractProcessor {
         List<VariableElement> fields = collectConfigurableFields(typeElement, configValueName);
 
         // Serialize
-        printWriter.println("    private Map<String, Object> serialize" + typeName + "(" + qualifiedName + " instance) {");
+        String inputType = getGeneratedSimpleClassName(typeElement);
+        printWriter.println("    private Map<String, Object> serialize" + typeName + "(" + inputType + " instance) {");
         printWriter.println("        Map<String, Object> map = new LinkedHashMap<>();");
         for (VariableElement field : fields) {
             AnnotationMirror annotationMirror = getAnnotationMirror(field, configValueName);
@@ -388,7 +427,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             boolean isNested = fieldTypeElement != null && isConfigurable(fieldTypeElement, configValueName.replace("ConfigValue", "Configurable"));
 
             if (isNested) {
-                 printWriter.println("        map.put(\"" + path + "\", serialize" + fieldTypeElement.getSimpleName() + "((" + fieldTypeElement.getQualifiedName() + ") " + handleName + ".get(instance)));");
+                 printWriter.println("        map.put(\"" + path + "\", serialize" + fieldTypeElement.getSimpleName() + "((" + getGeneratedSimpleClassName(fieldTypeElement) + ") " + handleName + ".get(instance)));");
             } else {
                  printWriter.println("        map.put(\"" + path + "\", " + handleName + ".get(instance));");
             }
@@ -398,9 +437,11 @@ public class ConfigContractProcessor extends AbstractProcessor {
         printWriter.println();
 
         // Deserialize
-        printWriter.println("    private " + qualifiedName + " deserialize" + typeName + "(Map<String, Object> map) {");
-        // We need a way to instantiate. Assume no-args constructor
-        printWriter.println("        " + qualifiedName + " instance = new " + qualifiedName + "();");
+        // Return the Generated Config Class
+        String returnType = getGeneratedSimpleClassName(typeElement);
+        printWriter.println("    private " + returnType + " deserialize" + typeName + "(Map<String, Object> map) {");
+        // We know GeneratedConfig has a no-args constructor
+        printWriter.println("        " + returnType + " instance = new " + returnType + "();");
         printWriter.println("        if (map == null) return instance;");
 
         for (VariableElement field : fields) {
@@ -418,10 +459,21 @@ public class ConfigContractProcessor extends AbstractProcessor {
             printWriter.println("        if (map.containsKey(\"" + path + "\")) {");
             if (isNested) {
                  // Map<String, Object> nestedMap = (Map) map.get(path)
+                 // The field in GeneratedConfig is of type GeneratedNested, so deserialize returns correctly.
                  printWriter.println("            " + handleName + ".set(instance, deserialize" + fieldTypeElement.getSimpleName() + "((Map<String, Object>) map.get(\"" + path + "\")));");
             } else if (fieldTypeStr.equals("int") || fieldTypeStr.equals("java.lang.Integer")) {
                  printWriter.println("            " + handleName + ".set(instance, (int) map.get(\"" + path + "\"));");
-            } // ... add other types ... simplified for brevity, using casts mainly
+            } else if (fieldTypeStr.equals("double") || fieldTypeStr.equals("java.lang.Double")) {
+                 printWriter.println("            " + handleName + ".set(instance, (double) map.get(\"" + path + "\"));");
+            } else if (fieldTypeStr.equals("boolean") || fieldTypeStr.equals("java.lang.Boolean")) {
+                 printWriter.println("            " + handleName + ".set(instance, (boolean) map.get(\"" + path + "\"));");
+            } else if (fieldTypeStr.equals("long") || fieldTypeStr.equals("java.lang.Long")) {
+                 printWriter.println("            " + handleName + ".set(instance, (long) map.get(\"" + path + "\"));");
+            }  else if (fieldTypeStr.equals("java.lang.String")) {
+                 printWriter.println("            " + handleName + ".set(instance, (String) map.get(\"" + path + "\"));");
+            }  else if (isListType(fieldType)) {
+                 printWriter.println("            " + handleName + ".set(instance, (List) map.get(\"" + path + "\"));");
+            }
             else {
                  printWriter.println("            " + handleName + ".set(instance, (" + simplifyType(fieldTypeStr) + ") map.get(\"" + path + "\"));");
             }
