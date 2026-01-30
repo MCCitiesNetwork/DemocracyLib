@@ -195,7 +195,7 @@ public class ConfigContractProcessor extends AbstractProcessor {
             if (sourceElement.getKind() == ElementKind.INTERFACE) {
                 printWriter.println("public class " + className + " implements " + sourceElement.getSimpleName() + ", GeneratedConfig {");
             } else {
-                printWriter.println("public class " + className + " extends " + sourceElement.getSimpleName() + " implements GeneratedConfig {");
+                printWriter.println("public class " + className + " implements GeneratedConfig {");
             }
             printWriter.println();
             printWriter.println("    private File file;");
@@ -234,7 +234,9 @@ public class ConfigContractProcessor extends AbstractProcessor {
             // Implementations (Getters/Methods)
             for (ConfigItem item : items.values()) {
                 if (item.sourceElement.getKind() == ElementKind.METHOD) {
-                    printWriter.println("    @Override");
+                    if (sourceElement.getKind() == ElementKind.INTERFACE) {
+                        printWriter.println("    @Override");
+                    }
                     printWriter.println("    public " + item.type.toString() + " " + item.sourceElement.getSimpleName() + "() {");
                     printWriter.println("        return this." + item.fieldName + ";");
                     printWriter.println("    }");
