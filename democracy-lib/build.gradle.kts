@@ -25,6 +25,7 @@ repositories {
 
 dependencies {
     implementation(project(":bridge-contract"))
+    implementation(project(":bridge-processor"))
     annotationProcessor(project(":bridge-processor"))
     testAnnotationProcessor(project(":bridge-processor"))
 
