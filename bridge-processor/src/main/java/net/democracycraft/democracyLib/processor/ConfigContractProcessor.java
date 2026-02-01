@@ -351,7 +351,29 @@ public class ConfigContractProcessor extends AbstractProcessor {
     }
 
     private void generateItemSave(PrintWriter printWriter, ConfigItem item) {
-        printWriter.println("        yamlConfiguration.set(\"" + item.name + "\", this." + item.fieldName + ");");
+        String path = item.name;
+        String fieldName = item.fieldName;
+        String typeFqn = item.type.toString();
+
+        // For primitive types, just set the value directly (they have default values like 0, false, etc.)
+        if (isPrimitiveType(typeFqn)) {
+            printWriter.println("        yamlConfiguration.set(\"" + path + "\", this." + fieldName + ");");
+        } else {
+            // For reference types (String, objects, lists, etc.), we need to ensure the key is always written
+            // even when the value is null, so the comment appears in the file.
+            // When null, we write an empty string "" so the field appears with its comment.
+            printWriter.println("        if (this." + fieldName + " != null) {");
+            printWriter.println("            yamlConfiguration.set(\"" + path + "\", this." + fieldName + ");");
+            printWriter.println("        } else {");
+            printWriter.println("            yamlConfiguration.set(\"" + path + "\", \"\");");
+            printWriter.println("        }");
+        }
+    }
+
+    private boolean isPrimitiveType(String typeFqn) {
+        return typeFqn.equals("int") || typeFqn.equals("double") || typeFqn.equals("boolean") ||
+               typeFqn.equals("long") || typeFqn.equals("float") || typeFqn.equals("short") ||
+               typeFqn.equals("byte") || typeFqn.equals("char");
     }
 
     private void extractImports(String typeString, Set<String> imports) {
