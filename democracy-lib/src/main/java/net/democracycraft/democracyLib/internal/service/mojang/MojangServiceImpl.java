@@ -24,8 +24,8 @@ import java.util.logging.Level;
 
 public class MojangServiceImpl<PluginType extends Plugin> extends AsyncDemocracyServiceImpl implements MojangService<PluginType> {
 
-    private static final String UUID_TO_NAME_URL = "https://sessionserver.mojang.com/session/minecraft/profile/";
-    private static final String NAME_TO_UUID_URL = "https://api.mojang.com/users/profiles/minecraft/";
+    // playerdb.co resolves both usernames and UUIDs (dashed or raw) on the same endpoint.
+    private static final String PLAYERDB_URL = "https://playerdb.co/api/player/minecraft/";
     private static final int TIMEOUT_MS = 5000;
 
     private final PluginType plugin;
@@ -48,14 +48,13 @@ public class MojangServiceImpl<PluginType extends Plugin> extends AsyncDemocracy
             return CompletableFuture.completedFuture(mojangServiceDemocracyCache.getUniqueIdentifierToNameMap().get(uniqueIdentifier));
         }
 
-        // Fetch from Mojang API
+        // Fetch from PlayerDB API
         return supplyAsync(() -> {
             try {
-                String url = UUID_TO_NAME_URL + uniqueIdentifier.toString().replace("-", "");
-                JsonObject response = getJsonObject(url);
-                
-                if (response != null && response.has("name")) {
-                    String name = response.get("name").getAsString();
+                JsonObject player = fetchPlayer(uniqueIdentifier.toString());
+
+                if (player != null && player.has("username")) {
+                    String name = player.get("username").getAsString();
                     // update cache
                     mojangServiceDemocracyCache.getUniqueIdentifierToNameMap().put(uniqueIdentifier, name);
                     mojangServiceDemocracyCache.getNameToUniqueIdentifierMap().put(name.toLowerCase(), uniqueIdentifier);
@@ -79,20 +78,19 @@ public class MojangServiceImpl<PluginType extends Plugin> extends AsyncDemocracy
 
         return supplyAsync(() -> {
             try {
-                String url = NAME_TO_UUID_URL + name;
-                JsonObject response = getJsonObject(url);
-                
-                if (response != null && response.has("id")) {
-                    String rawUuid = response.get("id").getAsString();
-                    UUID uuid = fromRawUUID(rawUuid);
-                    
+                JsonObject player = fetchPlayer(name);
+
+                if (player != null && player.has("id")) {
+                    // "id" is already a dashed UUID
+                    UUID uuid = UUID.fromString(player.get("id").getAsString());
+
                     // update cache
                     mojangServiceDemocracyCache.getNameToUniqueIdentifierMap().put(name.toLowerCase(), uuid);
-                    mojangServiceDemocracyCache.getUniqueIdentifierToNameMap().put(uuid, response.get("name").getAsString());
+                    mojangServiceDemocracyCache.getUniqueIdentifierToNameMap().put(uuid, player.get("username").getAsString());
                     return uuid;
                 }
             } catch (Exception e) {
-                plugin.getLogger().log(Level.SEVERE, "Failed to retrieve name for UUID " + name, e);
+                plugin.getLogger().log(Level.SEVERE, "Failed to retrieve UUID for name " + name, e);
             }
             return null;
         });
@@ -109,19 +107,18 @@ public class MojangServiceImpl<PluginType extends Plugin> extends AsyncDemocracy
 
         return supplyAsync(() -> {
             try {
-                // ?unsigned=false to get signed textures
-                String url = UUID_TO_NAME_URL + uniqueIdentifier.toString().replace("-", "") + "?unsigned=false";
-                JsonObject response = getJsonObject(url);
+                // PlayerDB includes signed texture properties by default
+                JsonObject player = fetchPlayer(uniqueIdentifier.toString());
 
-                if (response != null && response.has("properties")) {
-                    JsonArray properties = response.getAsJsonArray("properties");
+                if (player != null && player.has("properties")) {
+                    JsonArray properties = player.getAsJsonArray("properties");
 
                     for (JsonElement element : properties) {
                         JsonObject prop = element.getAsJsonObject();
                         if (prop.has("name") && prop.get("name").getAsString().equals("textures")) {
                             String value = prop.get("value").getAsString();
                             String signature = prop.has("signature") ? prop.get("signature").getAsString() : null;
-                            
+
                             SkinDto skin = SkinDto.of(value, signature);
                             mojangServiceDemocracyCache.getUniqueIdentifierToSkinMap().put(uniqueIdentifier, skin);
                             return skin;
@@ -137,20 +134,27 @@ public class MojangServiceImpl<PluginType extends Plugin> extends AsyncDemocracy
 
     // util
 
-    private UUID fromRawUUID(String rawUuid) {
-        return UUID.fromString(rawUuid.replaceFirst(
-                "(\\p{XDigit}{8})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}+)",
-                "$1-$2-$3-$4-$5"
-        ));
+    /**
+     * Fetches the {@code data.player} object for a username or UUID, or {@code null}
+     * if the lookup failed or the player was not found.
+     */
+    private @Nullable JsonObject fetchPlayer(String usernameOrUuid) throws IOException {
+        JsonObject response = getJsonObject(PLAYERDB_URL + usernameOrUuid);
+        if (response == null) return null;
+        if (response.has("success") && !response.get("success").getAsBoolean()) return null;
+        if (!response.has("data")) return null;
+
+        JsonObject data = response.getAsJsonObject("data");
+        return data.has("player") ? data.getAsJsonObject("player") : null;
     }
 
     private JsonObject getJsonObject(String urlString) throws IOException {
         HttpURLConnection connection = createConnection(urlString);
         int status = connection.getResponseCode();
-        
+
         // basic rate limit handling
         if (status == 429) {
-            System.err.println("[DemocracyLib] Mojang API Rate Limit hit!");
+            System.err.println("[DemocracyLib] PlayerDB API Rate Limit hit!");
             return null;
         }
         if (status != HttpURLConnection.HTTP_OK) return null;
@@ -165,10 +169,11 @@ public class MojangServiceImpl<PluginType extends Plugin> extends AsyncDemocracy
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setConnectTimeout(TIMEOUT_MS);
         connection.setReadTimeout(TIMEOUT_MS);
-        connection.setRequestProperty("User-Agent", "DemocracyLib-MojangService/1.0");
+        // playerdb.co asks for an identifying User-Agent
+        connection.setRequestProperty("User-Agent", "DemocracyLib-MojangService/1.0 (plugin: " + plugin.getName() + ")");
         return connection;
     }
-    
+
     // Shut down executor
     public void shutdown() {
         executor.shutdown();
@@ -194,4 +199,3 @@ public class MojangServiceImpl<PluginType extends Plugin> extends AsyncDemocracy
         return executor;
     }
 }
-
