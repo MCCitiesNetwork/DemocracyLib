@@ -9,7 +9,9 @@ import net.democracycraft.democracyLib.api.service.engine.DemocracyServiceManage
 import net.democracycraft.democracyLib.api.service.github.GitHubGistService;
 import net.democracycraft.democracyLib.api.service.mojang.MojangService;
 import net.democracycraft.democracyLib.internal.bootstrap.*;
+import net.democracycraft.democracyLib.internal.bootstrap.bridge.BridgeValueAdapter;
 import net.democracycraft.democracyLib.internal.bootstrap.proxy.DemocracyServiceProxies;
+import net.democracycraft.democracyLib.internal.config.DemocracyConfigManagerImpl;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
@@ -30,7 +32,7 @@ public class DemocracyLibReflectiveApi implements DemocracyLibApi {
     private final DemocracyBootstrap.ProviderFactory providerFactory;
     private final boolean logging;
 
-    private final Map<String, MethodHandle> mhCache = new ConcurrentHashMap<>();
+    private final Map<String, ResolvedLeaderCall> callCache = new ConcurrentHashMap<>();
 
     private volatile DemocracyServiceManager serviceManagerProxy;
     private volatile DemocracyConfigManager configManagerProxy;
@@ -104,8 +106,10 @@ public class DemocracyLibReflectiveApi implements DemocracyLibApi {
         synchronized (this) {
             if (configManagerProxy != null) return configManagerProxy;
 
-            Object leaderConfigMgr = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyLibApi.getConfigManager, new Object[]{});
-            configManagerProxy = new DemocracyBridgeConfigManager(leaderConfigMgr);
+            // Configs are per-plugin files, not shared runtime state, so followers own their manager.
+            // Bridging it is also unsound: configurate is relocated per copy, so the leader's
+            // ObjectMapper cannot see a follower class's @ConfigSerializable annotations.
+            configManagerProxy = new DemocracyConfigManagerImpl(caller.getLogger());
             return configManagerProxy;
         }
     }
@@ -122,7 +126,7 @@ public class DemocracyLibReflectiveApi implements DemocracyLibApi {
         // Clear local caches.
         serviceManagerProxy = null;
         configManagerProxy = null;
-        mhCache.clear();
+        callCache.clear();
     }
 
     @Override
@@ -139,48 +143,50 @@ public class DemocracyLibReflectiveApi implements DemocracyLibApi {
         GeneratedBridgeContract.Spec spec = DemocracyBootstrapReflection.loadGeneratedSpec(contractId);
         String key = DemocracyBootstrapReflection.cacheKeyByContractId(contractId);
 
-        MethodHandle methodHandle = mhCache.computeIfAbsent(key, k -> {
-            Method targetMethod = DemocracyBootstrapReflection.resolveByGeneratedSpec(leader.getClass(), spec);
-            try {
-                return MethodHandles.publicLookup().unreflect(targetMethod);
-            } catch (IllegalAccessException e) {
-                try {
-                    targetMethod.setAccessible(true);
-                    return MethodHandles.lookup().unreflect(targetMethod);
-                } catch (IllegalAccessException ex) {
-                    throw new RuntimeException(ex);
-                }
-            }
-        });
+        ResolvedLeaderCall call = callCache.computeIfAbsent(key, k ->
+                resolveLeaderCall(leader.getClass(), spec));
 
         try {
-            Object[] full = new Object[actualArgs.length + 1];
-            full[0] = leader;
-            System.arraycopy(actualArgs, 0, full, 1, actualArgs.length);
-            return methodHandle.invokeWithArguments(full);
+            return invokeAdapted(call, leader, actualArgs);
         } catch (Throwable t) {
             try {
-                mhCache.remove(key);
+                callCache.remove(key);
             } catch (Throwable ignored) {
             }
             Object retryLeader = DemocracyBootstrap.ensureLeader(caller, providerFactory, logging);
             try {
-                Method retryMethod = DemocracyBootstrapReflection.resolveByGeneratedSpec(retryLeader.getClass(), spec);
-                MethodHandle retryHandle;
-                try {
-                    retryHandle = MethodHandles.publicLookup().unreflect(retryMethod);
-                } catch (IllegalAccessException e) {
-                    retryMethod.setAccessible(true);
-                    retryHandle = MethodHandles.lookup().unreflect(retryMethod);
-                }
-
-                Object[] full = new Object[actualArgs.length + 1];
-                full[0] = retryLeader;
-                System.arraycopy(actualArgs, 0, full, 1, actualArgs.length);
-                return retryHandle.invokeWithArguments(full);
+                ResolvedLeaderCall retryCall = resolveLeaderCall(retryLeader.getClass(), spec);
+                return invokeAdapted(retryCall, retryLeader, actualArgs);
             } catch (Throwable t2) {
                 throw new RuntimeException("Failed invoking leader contract id: " + contractId, t2);
             }
         }
+    }
+
+    private Object invokeAdapted(@NotNull ResolvedLeaderCall call, @NotNull Object leader, Object[] args) throws Throwable {
+        // Adapt arguments to types the leader's classloader can hold (library-typed args become proxies).
+        Object[] adapted = BridgeValueAdapter.adaptArguments(call.method(), args, getClass().getClassLoader());
+        Object[] full = new Object[adapted.length + 1];
+        full[0] = leader;
+        System.arraycopy(adapted, 0, full, 1, adapted.length);
+        return call.handle().invokeWithArguments(full);
+    }
+
+    private static @NotNull ResolvedLeaderCall resolveLeaderCall(@NotNull Class<?> leaderClass,
+                                                                 @NotNull GeneratedBridgeContract.Spec spec) {
+        Method targetMethod = DemocracyBootstrapReflection.resolveByGeneratedSpec(leaderClass, spec);
+        try {
+            return new ResolvedLeaderCall(targetMethod, MethodHandles.publicLookup().unreflect(targetMethod));
+        } catch (IllegalAccessException e) {
+            try {
+                targetMethod.setAccessible(true);
+                return new ResolvedLeaderCall(targetMethod, MethodHandles.lookup().unreflect(targetMethod));
+            } catch (IllegalAccessException ex) {
+                throw new RuntimeException(ex);
+            }
+        }
+    }
+
+    private record ResolvedLeaderCall(Method method, MethodHandle handle) {
     }
 }

@@ -19,7 +19,7 @@ import java.util.Properties;
  * - the leader implementation (real shared runtime), or
  * - a follower proxy (reflection bridge to that leader).
  */
-@BridgeContractVersion(1)
+@BridgeContractVersion(2)
 public final class DemocracyBootstrap {
 
     public static final String KEY_LEADER = GeneratedBridgeContract.AnchorKeys.LEADER;

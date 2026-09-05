@@ -1,8 +1,6 @@
 package net.democracycraft.democracyLib.internal.bootstrap.proxy;
 
-import net.democracycraft.democracyLib.internal.bootstrap.handler.GenericDemocracyBootstrapHandler;
-
-import java.lang.reflect.Proxy;
+import net.democracycraft.democracyLib.internal.bootstrap.bridge.BridgeValueAdapter;
 
 /**
  * Creates best-effort proxies for leader-owned service objects.
@@ -16,14 +14,6 @@ public class DemocracyServiceProxyFactory {
 
     @SuppressWarnings("unchecked")
     public static <ApiType> ApiType proxyAs(Class<ApiType> api, Object leaderService) {
-        if (api.isInstance(leaderService)) {
-            return (ApiType) leaderService;
-        }
-
-        return (ApiType) Proxy.newProxyInstance(
-                api.getClassLoader(),
-                new Class[]{api},
-                new GenericDemocracyBootstrapHandler(leaderService)
-        );
+        return (ApiType) BridgeValueAdapter.adapt(api, leaderService, leaderService.getClass().getClassLoader());
     }
 }

@@ -1,5 +1,6 @@
 package net.democracycraft.democracyLib.internal.bootstrap.handler;
 
+import net.democracycraft.democracyLib.internal.bootstrap.bridge.BridgeValueAdapter;
 import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.NonNull;
 
@@ -11,11 +12,19 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Generic handler based on reflection/MethodHandle.
+ * <p>
+ * Every call is adapted at the classloader boundary by {@link BridgeValueAdapter}:
+ * arguments against the target method's declared parameter types (so the foreign side can
+ * hold them), and the result against the invoked interface method's declared return type
+ * (so the local side can hold it).
  */
 public class GenericDemocracyBootstrapHandler implements DemocracyBootstrapHandler {
 
     protected final Object target;
-    protected final Map<Method, MethodHandle> cache = new ConcurrentHashMap<>();
+    private final Map<Method, ResolvedCall> cache = new ConcurrentHashMap<>();
+
+    private record ResolvedCall(Method targetMethod, MethodHandle handle) {
+    }
 
     public GenericDemocracyBootstrapHandler(@NotNull Object target) {
         this.target = target;
@@ -32,25 +41,29 @@ public class GenericDemocracyBootstrapHandler implements DemocracyBootstrapHandl
             return method.invoke(this, args);
         }
 
-        MethodHandle mh = cache.computeIfAbsent(method, m -> {
-            Method tm = resolveByNameAndArity(target.getClass(), m.getName(), m.getParameterCount());
+        ResolvedCall call = cache.computeIfAbsent(method, m -> {
+            Method targetMethod = resolveByNameAndArity(target.getClass(), m.getName(), m.getParameterCount());
             try {
-                return MethodHandles.publicLookup().unreflect(tm);
+                return new ResolvedCall(targetMethod, MethodHandles.publicLookup().unreflect(targetMethod));
             } catch (IllegalAccessException e) {
                 try {
-                    tm.setAccessible(true);
-                    return MethodHandles.lookup().unreflect(tm);
+                    targetMethod.setAccessible(true);
+                    return new ResolvedCall(targetMethod, MethodHandles.lookup().unreflect(targetMethod));
                 } catch (IllegalAccessException ex) {
                     throw new RuntimeException(ex);
                 }
             }
         });
 
-        Object[] actualArgs = args == null ? new Object[0] : args;
-        Object[] full = new Object[actualArgs.length + 1];
+        ClassLoader callerLoader = method.getDeclaringClass().getClassLoader();
+        Object[] adaptedArgs = BridgeValueAdapter.adaptArguments(call.targetMethod(), args, callerLoader);
+
+        Object[] full = new Object[adaptedArgs.length + 1];
         full[0] = target;
-        System.arraycopy(actualArgs, 0, full, 1, actualArgs.length);
-        return mh.invokeWithArguments(full);
+        System.arraycopy(adaptedArgs, 0, full, 1, adaptedArgs.length);
+        Object result = call.handle().invokeWithArguments(full);
+
+        return BridgeValueAdapter.adapt(method.getGenericReturnType(), result, target.getClass().getClassLoader());
     }
 
     protected static @NonNull Method resolveByNameAndArity(@NonNull Class<?> type, String name, int arity) {

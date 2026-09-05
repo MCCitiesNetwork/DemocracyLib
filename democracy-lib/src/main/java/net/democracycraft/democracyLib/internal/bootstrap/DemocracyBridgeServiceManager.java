@@ -5,6 +5,8 @@ import net.democracycraft.democracyLib.api.bootstrap.GeneratedBridgeIds;
 import net.democracycraft.democracyLib.api.service.engine.DemocracyService;
 import net.democracycraft.democracyLib.api.service.engine.DemocracyServiceManager;
 import net.democracycraft.democracyLib.api.service.engine.PluginBoundDemocracyService;
+import net.democracycraft.democracyLib.internal.bootstrap.bridge.BridgeTypeContract;
+import net.democracycraft.democracyLib.internal.bootstrap.bridge.BridgeValueAdapter;
 import net.democracycraft.democracyLib.internal.bootstrap.proxy.DemocracyServiceProxyFactory;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
@@ -18,13 +20,19 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Reflection bridge for the leader's DemocracyServiceManager.
- * Note: returning DemocracyService instances across classloaders is unsafe. For retrieval we provide
- * best-effort adapters (dynamic proxies) only for services whose API interface is visible to the caller.
+ * <p>
+ * Returned services are follower-local proxies ({@link DemocracyServiceProxyFactory}); arguments
+ * are adapted by {@link BridgeValueAdapter} so the leader can hold them. {@code Class} tokens used
+ * as <b>filters</b> are translated to the leader's classloader first — the leader's
+ * {@code isInstance} checks would otherwise silently never match a follower's Class object.
  */
 public class DemocracyBridgeServiceManager implements DemocracyServiceManager {
 
     private final Object leaderServiceManager;
-    private final Map<String, MethodHandle> methodHandleCache = new ConcurrentHashMap<>();
+    private final Map<String, ResolvedLeaderCall> callCache = new ConcurrentHashMap<>();
+
+    private record ResolvedLeaderCall(Method method, MethodHandle handle) {
+    }
 
     public DemocracyBridgeServiceManager(@NotNull Object leaderServiceManager) {
         this.leaderServiceManager = Objects.requireNonNull(leaderServiceManager, "leaderServiceManager");
@@ -45,7 +53,8 @@ public class DemocracyBridgeServiceManager implements DemocracyServiceManager {
 
     @Override
     public @NotNull <T extends DemocracyService> List<T> getServicesByType(@NotNull Class<T> serviceType) {
-        Object raw = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyServiceManager.getServicesByType__Class, new Object[]{serviceType});
+        Object raw = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyServiceManager.getServicesByType__Class,
+                new Object[]{translateFilterClass(serviceType)});
         if (!(raw instanceof List<?> list)) return List.of();
 
         List<T> out = new ArrayList<>(list.size());
@@ -88,15 +97,31 @@ public class DemocracyBridgeServiceManager implements DemocracyServiceManager {
 
     @Override
     public <P extends Plugin, T extends PluginBoundDemocracyService<?>> boolean hasRegisteredService(@NotNull P plugin, @NotNull Class<T> serviceType) {
-        Object raw = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyServiceManager.hasRegisteredService__Plugin__Class, new Object[]{plugin, serviceType});
+        Object raw = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyServiceManager.hasRegisteredService__Plugin__Class,
+                new Object[]{plugin, translateFilterClass(serviceType)});
         return raw instanceof Boolean b && b;
     }
 
     @Override
     public @Nullable <T extends PluginBoundDemocracyService<?>> T getServiceForPlugin(@NotNull Plugin plugin, @NotNull Class<T> serviceClass) {
-        Object leaderService = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyServiceManager.getServiceForPlugin__Plugin__Class, new Object[]{plugin, serviceClass});
+        Object leaderService = invokeLeaderByContractId(GeneratedBridgeIds.DemocracyServiceManager.getServiceForPlugin__Plugin__Class,
+                new Object[]{plugin, translateFilterClass(serviceClass)});
         if (leaderService == null) return null;
         return DemocracyServiceProxyFactory.proxyAs(serviceClass, leaderService);
+    }
+
+    /**
+     * Translates a library Class token to the leader's classloader so leader-side
+     * {@code isInstance} filters can match. Falls back to the local token (matching nothing,
+     * as before) when the leader's copy does not have the type.
+     */
+    private @NotNull Class<?> translateFilterClass(@NotNull Class<?> localType) {
+        if (!BridgeTypeContract.isLibraryType(localType)) return localType;
+        try {
+            return Class.forName(localType.getName(), false, leaderServiceManager.getClass().getClassLoader());
+        } catch (ClassNotFoundException | LinkageError e) {
+            return localType;
+        }
     }
 
     private Object invokeLeaderByContractId(@NotNull String contractId, Object[] args) {
@@ -107,14 +132,14 @@ public class DemocracyBridgeServiceManager implements DemocracyServiceManager {
         GeneratedBridgeContract.Spec spec = DemocracyBootstrapReflection.loadGeneratedSpec(contractId);
         String key = DemocracyBootstrapReflection.cacheKeyByContractId(contractId);
 
-        MethodHandle methodHandle = methodHandleCache.computeIfAbsent(key, k -> {
+        ResolvedLeaderCall call = callCache.computeIfAbsent(key, k -> {
             Method targetMethod = DemocracyBootstrapReflection.resolveByGeneratedSpec(leaderServiceManager.getClass(), spec);
             try {
-                return MethodHandles.publicLookup().unreflect(targetMethod);
+                return new ResolvedLeaderCall(targetMethod, MethodHandles.publicLookup().unreflect(targetMethod));
             } catch (IllegalAccessException e) {
                 try {
                     targetMethod.setAccessible(true);
-                    return MethodHandles.lookup().unreflect(targetMethod);
+                    return new ResolvedLeaderCall(targetMethod, MethodHandles.lookup().unreflect(targetMethod));
                 } catch (IllegalAccessException ex) {
                     throw new RuntimeException(ex);
                 }
@@ -122,10 +147,11 @@ public class DemocracyBridgeServiceManager implements DemocracyServiceManager {
         });
 
         try {
-            Object[] full = new Object[actualArgs.length + 1];
+            Object[] adapted = BridgeValueAdapter.adaptArguments(call.method(), actualArgs, getClass().getClassLoader());
+            Object[] full = new Object[adapted.length + 1];
             full[0] = leaderServiceManager;
-            System.arraycopy(actualArgs, 0, full, 1, actualArgs.length);
-            return methodHandle.invokeWithArguments(full);
+            System.arraycopy(adapted, 0, full, 1, adapted.length);
+            return call.handle().invokeWithArguments(full);
         } catch (Throwable t) {
             throw new RuntimeException("Failed invoking leader service manager contract id: " + contractId, t);
         }
